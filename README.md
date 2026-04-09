@@ -1052,7 +1052,7 @@ The entire system costs about one cent per month in production. The 90% token op
 ## Developer
 
 **Adil Khan**
-DevOps Engineer | AWS Cloud Intern @ F13 Technology
+DevOps Engineer
 HashiCorp Certified Terraform Associate (004)
 
 - GitHub: https://github.com/adil-khan-723
