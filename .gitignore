@@ -1,4 +1,49 @@
+# Environment
 .env
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.python-version
+
+# Temporary files
+.tmp/
+
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Logs
+*.log
+audit.log
+
+# IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node (if any)
 node_modules/
+
+# Ollama models (stored on external SSD, not in repo)
+*.gguf
+*.bin
