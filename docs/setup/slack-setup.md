@@ -51,10 +51,6 @@ oauth_config:
       - users:read
 
 settings:
-  event_subscriptions:
-    bot_events:
-      - app_mention
-      - message.im
   interactivity:
     is_enabled: true
   socket_mode_enabled: true
