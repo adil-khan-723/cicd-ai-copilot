@@ -80,14 +80,20 @@ def _build_provider(
         return OllamaProvider(model=model)
 
     if provider_name == "anthropic":
-        # Wired in Phase 5
-        raise NotImplementedError("Anthropic provider not yet implemented. Wait for Phase 5.")
+        from providers.anthropic_provider import AnthropicProvider
+        model = (
+            settings.anthropic_generation_model if is_generation
+            else settings.anthropic_analysis_model
+        )
+        return AnthropicProvider(model=model)
 
     if provider_name == "groq":
-        raise NotImplementedError("Groq provider not yet implemented. Wait for Phase 5.")
+        from providers.groq_provider import GroqProvider
+        return GroqProvider(model=settings.groq_model)
 
     if provider_name == "gemini":
-        raise NotImplementedError("Gemini provider not yet implemented. Wait for Phase 5.")
+        from providers.gemini_provider import GeminiProvider
+        return GeminiProvider(model=settings.gemini_model)
 
     raise ValueError(
         f"Unknown LLM provider '{provider_name}'. "
