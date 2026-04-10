@@ -36,12 +36,20 @@ def retry_pipeline(job_name: str, build_number: str = "0") -> FixResult:
 
 
 def clear_docker_cache(job_name: str, build_number: str = "0") -> FixResult:
-    """Trigger build with DOCKER_NO_CACHE=true parameter."""
+    """Trigger build with DOCKER_NO_CACHE=true parameter, falling back to plain retry."""
     try:
         server = _get_jenkins_server()
-        server.build_job(job_name, parameters={"DOCKER_NO_CACHE": "true"})
-        logger.info("Triggered Docker cache-bust build for: %s", job_name)
-        return FixResult(success=True, fix_type="clear_cache", detail=f"Job '{job_name}' triggered with DOCKER_NO_CACHE=true.")
+        try:
+            server.build_job(job_name, parameters={"DOCKER_NO_CACHE": "true"})
+            logger.info("Triggered Docker cache-bust build for: %s", job_name)
+            return FixResult(success=True, fix_type="clear_cache", detail=f"Job '{job_name}' triggered with DOCKER_NO_CACHE=true.")
+        except Exception as param_err:
+            # Job has no parameters — fall back to plain retry
+            if "400" in str(param_err) or "Bad Request" in str(param_err):
+                logger.warning("Job '%s' has no parameters, falling back to plain retry", job_name)
+                server.build_job(job_name)
+                return FixResult(success=True, fix_type="clear_cache", detail=f"Job '{job_name}' re-triggered (no parameters defined — plain retry).")
+            raise
     except jenkins.JenkinsException as e:
         logger.error("Failed to clear Docker cache for %s: %s", job_name, e)
         return FixResult(success=False, fix_type="clear_cache", detail=str(e))
@@ -50,12 +58,18 @@ def clear_docker_cache(job_name: str, build_number: str = "0") -> FixResult:
 
 
 def clear_npm_cache(job_name: str, build_number: str = "0") -> FixResult:
-    """Trigger build with CLEAR_NPM_CACHE=true parameter."""
+    """Trigger build with CLEAR_NPM_CACHE=true parameter, falling back to plain retry."""
     try:
         server = _get_jenkins_server()
-        server.build_job(job_name, parameters={"CLEAR_NPM_CACHE": "true"})
-        logger.info("Triggered npm cache-bust build for: %s", job_name)
-        return FixResult(success=True, fix_type="clear_cache", detail=f"Job '{job_name}' triggered with CLEAR_NPM_CACHE=true.")
+        try:
+            server.build_job(job_name, parameters={"CLEAR_NPM_CACHE": "true"})
+            logger.info("Triggered npm cache-bust build for: %s", job_name)
+            return FixResult(success=True, fix_type="clear_cache", detail=f"Job '{job_name}' triggered with CLEAR_NPM_CACHE=true.")
+        except Exception as param_err:
+            if "400" in str(param_err) or "Bad Request" in str(param_err):
+                server.build_job(job_name)
+                return FixResult(success=True, fix_type="clear_cache", detail=f"Job '{job_name}' re-triggered (no parameters defined — plain retry).")
+            raise
     except jenkins.JenkinsException as e:
         return FixResult(success=False, fix_type="clear_cache", detail=str(e))
     except Exception as e:
@@ -63,12 +77,18 @@ def clear_npm_cache(job_name: str, build_number: str = "0") -> FixResult:
 
 
 def pull_fresh_image(job_name: str, build_number: str = "0") -> FixResult:
-    """Trigger build with PULL_FRESH_IMAGE=true parameter."""
+    """Trigger build with PULL_FRESH_IMAGE=true parameter, falling back to plain retry."""
     try:
         server = _get_jenkins_server()
-        server.build_job(job_name, parameters={"PULL_FRESH_IMAGE": "true"})
-        logger.info("Triggered fresh image pull build for: %s", job_name)
-        return FixResult(success=True, fix_type="pull_image", detail=f"Job '{job_name}' triggered with PULL_FRESH_IMAGE=true.")
+        try:
+            server.build_job(job_name, parameters={"PULL_FRESH_IMAGE": "true"})
+            logger.info("Triggered fresh image pull build for: %s", job_name)
+            return FixResult(success=True, fix_type="pull_image", detail=f"Job '{job_name}' triggered with PULL_FRESH_IMAGE=true.")
+        except Exception as param_err:
+            if "400" in str(param_err) or "Bad Request" in str(param_err):
+                server.build_job(job_name)
+                return FixResult(success=True, fix_type="pull_image", detail=f"Job '{job_name}' re-triggered (no parameters defined — plain retry).")
+            raise
     except jenkins.JenkinsException as e:
         return FixResult(success=False, fix_type="pull_image", detail=str(e))
     except Exception as e:

@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevOps AI Agent — UI Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060910; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Top bar */
+  .topbar {
+    height: 52px;
+    background: #0c111d;
+    border-bottom: 1px solid #1e2940;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: -0.3px;
+    color: #fff;
+  }
+  .logo-icon {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  .status-pill {
+    display: flex; align-items: center; gap: 5px;
+    background: #0d2318;
+    border: 1px solid #166534;
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: #4ade80;
+    margin-left: auto;
+  }
+  .status-dot { width: 6px; height: 6px; background: #4ade80; border-radius: 50%; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .topbar-stat {
+    font-size: 11px; color: #64748b;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .topbar-stat span { color: #e2e8f0; font-weight: 600; }
+
+  /* Main layout */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 52px;
+    background: #0c111d;
+    border-right: 1px solid #1e2940;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 0;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .nav-btn {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    color: #475569;
+    transition: all .15s;
+    position: relative;
+  }
+  .nav-btn.active { background: #1e3a5f; color: #60a5fa; }
+  .nav-btn:hover { background: #161f30; color: #94a3b8; }
+  .badge {
+    position: absolute; top: 4px; right: 4px;
+    background: #ef4444; color: #fff;
+    font-size: 8px; font-weight: 700;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .sidebar-spacer { flex: 1; }
+
+  /* Content area */
+  .content { display: flex; flex: 1; overflow: hidden; }
+
+  /* Failures panel */
+  .failures-panel {
+    width: 400px;
+    border-right: 1px solid #1e2940;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .panel-header {
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid #1e2940;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-title { font-size: 12px; font-weight: 600; color: #94a3b8; letter-spacing: .5px; text-transform: uppercase; }
+  .panel-count {
+    margin-left: auto;
+    background: #1e2940;
+    border-radius: 10px;
+    padding: 2px 7px;
+    font-size: 11px;
+    color: #64748b;
+  }
+
+  .failures-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .failures-list::-webkit-scrollbar { width: 4px; }
+  .failures-list::-webkit-scrollbar-track { background: transparent; }
+  .failures-list::-webkit-scrollbar-thumb { background: #1e2940; border-radius: 2px; }
+
+  .failure-card {
+    background: #0c111d;
+    border: 1px solid #1e2940;
+    border-radius: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color .15s;
+  }
+  .failure-card:hover { border-color: #2d4a6e; }
+  .failure-card.active { border-color: #3b82f6; background: #0f1929; }
+  .failure-card.success { border-left: 3px solid #22c55e; opacity: .7; }
+  .failure-card.failed { border-left: 3px solid #ef4444; }
+
+  .fc-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .fc-status { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .fc-status.red { background: #ef4444; }
+  .fc-status.green { background: #22c55e; }
+  .fc-job { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .fc-build { font-size: 11px; color: #475569; margin-left: auto; }
+
+  .fc-stage {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #1a2332; border: 1px solid #1e2940;
+    border-radius: 5px; padding: 2px 7px;
+    font-size: 11px; color: #94a3b8; font-family: monospace;
+    margin-bottom: 8px;
+  }
+
+  .fc-analysis { font-size: 11px; color: #64748b; line-height: 1.5; margin-bottom: 10px; }
+  .fc-analysis strong { color: #94a3b8; }
+
+  .confidence-bar { height: 3px; background: #1e2940; border-radius: 2px; margin-bottom: 10px; overflow: hidden; }
+  .confidence-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #3b82f6, #8b5cf6); }
+
+  .fc-actions { display: flex; gap: 6px; }
+  .btn-fix {
+    flex: 1;
+    background: linear-gradient(135deg, #1d4ed8, #4f46e5);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+  }
+  .btn-dismiss {
+    background: #111827;
+    border: 1px solid #1e2940;
+    color: #475569;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .btn-diag {
+    flex: 1;
+    background: #1a1f2e;
+    border: 1px solid #2d3748;
+    color: #94a3b8;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+  }
+
+  /* Chat panel */
+  .chat-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .chat-messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-thumb { background: #1e2940; border-radius: 2px; }
+
+  .msg { display: flex; gap: 10px; max-width: 85%; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg-avatar {
+    width: 28px; height: 28px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; flex-shrink: 0;
+  }
+  .msg-avatar.agent { background: linear-gradient(135deg, #3b82f6, #8b5cf6); }
+  .msg-avatar.user { background: #1e2940; }
+
+  .msg-bubble {
+    background: #0c111d;
+    border: 1px solid #1e2940;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #cbd5e1;
+  }
+  .msg.user .msg-bubble {
+    background: #1e3a5f;
+    border-color: #2d5a8e;
+    color: #e2e8f0;
+  }
+
+  .code-block {
+    background: #060910;
+    border: 1px solid #1e2940;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: 'Fira Code', monospace;
+    font-size: 11px;
+    color: #7dd3fc;
+    margin-top: 8px;
+    line-height: 1.7;
+    overflow: hidden;
+  }
+  .code-kw { color: #c084fc; }
+  .code-str { color: #86efac; }
+  .code-comment { color: #374151; }
+
+  .msg-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .msg-btn {
+    background: linear-gradient(135deg, #1d4ed8, #4f46e5);
+    color: #fff; border: none; border-radius: 6px;
+    padding: 5px 10px; font-size: 11px; font-weight: 600;
+    cursor: pointer;
+  }
+  .msg-btn.outline {
+    background: transparent;
+    border: 1px solid #1e2940;
+    color: #64748b;
+  }
+
+  .typing { display: flex; align-items: center; gap: 4px; padding: 10px 14px; }
+  .typing-dot { width: 6px; height: 6px; background: #3b82f6; border-radius: 50%; animation: bounce .8s infinite; }
+  .typing-dot:nth-child(2) { animation-delay: .15s; }
+  .typing-dot:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+
+  /* Chat input */
+  .chat-input-area {
+    padding: 14px 16px;
+    border-top: 1px solid #1e2940;
+    background: #0c111d;
+  }
+  .chat-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: #060910;
+    border: 1px solid #1e2940;
+    border-radius: 10px;
+    padding: 8px 12px;
+  }
+  .chat-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    color: #e2e8f0;
+    font-family: inherit;
+  }
+  .chat-input::placeholder { color: #334155; }
+  .send-btn {
+    width: 30px; height: 30px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border: none; border-radius: 7px;
+    color: #fff; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+  }
+  .chat-hint { font-size: 10px; color: #1e2940; margin-top: 6px; text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    DevOps AI Agent
+  </div>
+  <div class="topbar-stat">Ollama · <span>llama3.1:8b</span></div>
+  <div class="topbar-stat">Jenkins · <span style="color:#4ade80">●</span> <span>live</span></div>
+  <div class="topbar-stat">Builds today · <span>14</span></div>
+  <div class="topbar-stat">Fixes applied · <span>3</span></div>
+  <div class="status-pill"><div class="status-dot"></div>Agent running</div>
+</div>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="nav-btn active" title="Failures">
+      ⚡
+      <div class="badge">2</div>
+    </div>
+    <div class="nav-btn" title="Chat">💬</div>
+    <div class="nav-btn" title="Audit Log">📋</div>
+    <div class="sidebar-spacer"></div>
+    <div class="nav-btn" title="Settings">⚙️</div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- Failures feed -->
+    <div class="failures-panel">
+      <div class="panel-header">
+        <div class="panel-title">Live Failures</div>
+        <div class="panel-count">4 events</div>
+      </div>
+      <div class="failures-list">
+
+        <!-- Failure 1 — active -->
+        <div class="failure-card failed active">
+          <div class="fc-top">
+            <div class="fc-status red"></div>
+            <div class="fc-job">build-api</div>
+            <div class="fc-build">#42 · 2m ago</div>
+          </div>
+          <div class="fc-stage">⬡ Docker Build</div>
+          <div class="fc-analysis"><strong>Root cause:</strong> Docker daemon not accessible on Jenkins agent. Socket not mounted.</div>
+          <div class="confidence-bar"><div class="confidence-fill" style="width:90%"></div></div>
+          <div class="fc-actions">
+            <button class="btn-fix">⚡ Apply Fix (Clear Cache)</button>
+            <button class="btn-dismiss">✕</button>
+          </div>
+        </div>
+
+        <!-- Failure 2 — diagnostic -->
+        <div class="failure-card failed">
+          <div class="fc-top">
+            <div class="fc-status red"></div>
+            <div class="fc-job">ci-pipeline</div>
+            <div class="fc-build">#99 · 8m ago</div>
+          </div>
+          <div class="fc-stage">⬡ Push to ECR</div>
+          <div class="fc-analysis"><strong>Root cause:</strong> IAM authorization error — user not permitted to call ecr:GetAuthorizationToken.</div>
+          <div class="confidence-bar"><div class="confidence-fill" style="width:100%;background:linear-gradient(90deg,#f59e0b,#ef4444)"></div></div>
+          <div class="fc-actions">
+            <button class="btn-diag">🔍 Manual Review Required</button>
+            <button class="btn-dismiss">✕</button>
+          </div>
+        </div>
+
+        <!-- Success -->
+        <div class="failure-card success">
+          <div class="fc-top">
+            <div class="fc-status green"></div>
+            <div class="fc-job">test-pipeline</div>
+            <div class="fc-build">#7 · 14m ago</div>
+          </div>
+          <div class="fc-stage" style="color:#4ade80;border-color:#166534;background:#0d2318">✓ All stages passed</div>
+        </div>
+
+        <!-- Failure 3 — resolved -->
+        <div class="failure-card" style="opacity:.5">
+          <div class="fc-top">
+            <div class="fc-status" style="background:#475569"></div>
+            <div class="fc-job">deploy-prod</div>
+            <div class="fc-build">#31 · 1h ago</div>
+          </div>
+          <div class="fc-stage">⬡ npm Install</div>
+          <div style="font-size:11px;color:#334155">Fix applied — dismissed</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Chat panel -->
+    <div class="chat-panel">
+      <div class="panel-header">
+        <div class="panel-title">Agent Chat</div>
+        <div style="margin-left:auto;font-size:11px;color:#334155">Copilot mode · generation via qwen2.5-coder:14b</div>
+      </div>
+
+      <div class="chat-messages">
+
+        <div class="msg">
+          <div class="msg-avatar agent">⚡</div>
+          <div class="msg-bubble">
+            Hey Adil — I'm online. I can generate Jenkinsfiles, GitHub Actions workflows, or answer questions about your pipelines. What do you need?
+          </div>
+        </div>
+
+        <div class="msg user">
+          <div class="msg-avatar user">A</div>
+          <div class="msg-bubble">generate a jenkinsfile for python app docker build push to ecr</div>
+        </div>
+
+        <div class="msg">
+          <div class="msg-avatar agent">⚡</div>
+          <div class="msg-bubble">
+            Using template <code style="background:#1e2940;padding:1px 5px;border-radius:3px;font-size:11px">python-docker-ecr</code> — here's your Jenkinsfile:
+            <div class="code-block"><span class="code-kw">pipeline</span> {
+  <span class="code-kw">agent</span> any
+  <span class="code-kw">environment</span> {
+    ECR_REPO = <span class="code-str">'123456.dkr.ecr.us-east-1.amazonaws.com/app'</span>
+    IMAGE_TAG = <span class="code-str">"${env.BUILD_NUMBER}"</span>
+  }
+  <span class="code-kw">stages</span> {
+    <span class="code-kw">stage</span>(<span class="code-str">'Build'</span>) { <span class="code-kw">steps</span> {
+      sh <span class="code-str">'docker build -t $ECR_REPO:$IMAGE_TAG .'</span>
+    }}
+    <span class="code-kw">stage</span>(<span class="code-str">'Push'</span>) { <span class="code-kw">steps</span> {
+      sh <span class="code-str">'docker push $ECR_REPO:$IMAGE_TAG'</span>
+    }}
+  }
+}</div>
+            <div class="msg-actions">
+              <button class="msg-btn">✓ Approve &amp; Commit</button>
+              <button class="msg-btn outline">✎ Edit</button>
+              <button class="msg-btn outline">✕ Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg">
+          <div class="msg-avatar agent">⚡</div>
+          <div class="msg-bubble typing">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="chat-input-area">
+        <div class="chat-input-row">
+          <input class="chat-input" placeholder="Generate a pipeline, ask about a failure, or request changes..." />
+          <button class="send-btn">↑</button>
+        </div>
+        <div class="chat-hint">Try: "generate github actions for node docker" · "explain build-api #42 failure" · "add a lint stage"</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>
