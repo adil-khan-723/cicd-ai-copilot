@@ -1,0 +1,76 @@
+import pytest
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+from webhook.server import app
+
+
+client = TestClient(app)
+
+
+def test_dashboard_returns_html():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "devops-ai" in response.text.lower()
+
+
+def test_health_still_works():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_setup_invalid_payload_returns_422():
+    response = client.post("/api/setup", json={"github_repo": "bad"})
+    assert response.status_code == 422
+
+
+def test_setup_valid_payload():
+    with patch("ui.setup_handler.save_credentials") as mock_save:
+        response = client.post("/api/setup", json={
+            "github_repo": "owner/repo",
+            "github_token": "ghp_abc123",
+            "jenkins_url": "http://localhost:8080",
+            "jenkins_user": "admin",
+            "jenkins_token": "token123",
+        })
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    mock_save.assert_called_once()
+
+
+def test_api_jobs_returns_list():
+    with patch("ui.jobs_handler.get_jenkins_jobs", return_value=[
+        {"name": "build-api", "url": "http://j/job/build-api/", "status": "failure",
+         "last_build_number": 42, "last_build_result": "FAILURE"}
+    ]):
+        response = client.get("/api/jobs")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert data[0]["name"] == "build-api"
+
+
+def test_api_chat_returns_text():
+    with patch("ui.chat_handler.handle_chat", return_value=iter(["Hello from LLM"])):
+        response = client.post("/api/chat", json={"message": "hello"})
+    assert response.status_code == 200
+    assert "Hello from LLM" in response.text
+
+
+def test_api_fix_missing_fields_returns_422():
+    response = client.post("/api/fix", json={})
+    assert response.status_code == 422
+
+
+def test_api_fix_executes_and_returns_result():
+    with patch("agent.fix_executor.execute_fix") as mock_fix, \
+         patch("agent.audit_log.log_fix"):
+        mock_fix.return_value = MagicMock(success=True, fix_type="retry", detail="re-queued")
+        response = client.post("/api/fix", json={
+            "fix_type": "retry",
+            "job_name": "build-api",
+            "build_number": "42",
+        })
+    assert response.status_code == 200
+    assert response.json()["success"] is True

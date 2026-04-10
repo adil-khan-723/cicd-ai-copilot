@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     slack_signing_secret: str = Field(default="")
     slack_channel: str = Field(default="#devops-alerts")
 
+    # UI
+    slack_alerts: str = Field(default="enabled")   # "enabled" | "disabled"
+    github_repo: str = Field(default="")           # "owner/repo" active project
+
     # Jenkins
     jenkins_url: str = Field(default="http://localhost:8080")
     jenkins_user: str = Field(default="admin")
