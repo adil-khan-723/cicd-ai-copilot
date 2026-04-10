@@ -10,41 +10,48 @@ interface SidebarProps {
 }
 
 const navItems: { id: ActivePanel; icon: React.ElementType; label: string }[] = [
-  { id: 'pipeline', icon: Activity, label: 'Pipeline Feed' },
-  { id: 'chat', icon: MessageSquare, label: 'Copilot Chat' },
-  { id: 'jobs', icon: Server, label: 'Jobs' },
-  { id: 'settings', icon: Settings, label: 'Settings' },
+  { id: 'pipeline', icon: Activity,      label: 'Pipeline Feed' },
+  { id: 'chat',     icon: MessageSquare, label: 'Copilot Chat' },
+  { id: 'jobs',     icon: Server,        label: 'Jobs' },
+  { id: 'settings', icon: Settings,      label: 'Settings' },
 ]
 
 export function Sidebar({ active, onNav, onNewProject }: SidebarProps) {
   return (
-    <aside className="w-14 flex flex-col items-center py-4 gap-1 border-r border-border bg-surface shrink-0">
+    <aside className="w-14 flex flex-col items-center py-4 gap-1 border-r border-glass bg-surface shrink-0">
       {/* Logo */}
-      <div className="mb-4 flex h-8 w-8 items-center justify-center rounded bg-white/5 border border-border">
-        <Zap className="h-4 w-4 text-white/60" />
+      <div className="mb-5 flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-accent shadow-glow-accent">
+        <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
       </div>
 
-      <div className="flex flex-col gap-1 flex-1">
+      {/* Nav */}
+      <div className="flex flex-col gap-0.5 flex-1">
         {navItems.map(({ id, icon: Icon, label }) => (
           <button
             key={id}
             onClick={() => onNav(id)}
             title={label}
             className={cn(
-              'relative flex h-9 w-9 items-center justify-center rounded transition-colors group',
+              'relative flex h-9 w-9 items-center justify-center rounded-md transition-all duration-150 group cursor-pointer',
               active === id
-                ? 'bg-white/10 text-text-primary'
-                : 'text-text-dim hover:bg-white/5 hover:text-text-muted'
+                ? 'text-white'
+                : 'text-text-dim hover:text-text-muted hover:bg-white/5'
             )}
           >
             {active === id && (
               <motion.div
                 layoutId="sidebar-active"
-                className="absolute inset-0 rounded bg-white/10"
-                transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                className="absolute inset-0 rounded-md bg-accent-dim border border-accent/25"
+                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
               />
             )}
-            <Icon className="h-4 w-4 relative z-10" />
+            <Icon
+              className={cn(
+                'h-4 w-4 relative z-10 transition-colors duration-150',
+                active === id ? 'text-accent-hi' : ''
+              )}
+              strokeWidth={active === id ? 2 : 1.5}
+            />
           </button>
         ))}
       </div>
@@ -53,9 +60,9 @@ export function Sidebar({ active, onNav, onNewProject }: SidebarProps) {
       <button
         onClick={onNewProject}
         title="New Project"
-        className="flex h-9 w-9 items-center justify-center rounded text-text-dim hover:bg-white/5 hover:text-text-muted transition-colors"
+        className="flex h-9 w-9 items-center justify-center rounded-md text-text-dim hover:text-text-muted hover:bg-white/5 transition-all duration-150 cursor-pointer"
       >
-        <Plus className="h-4 w-4" />
+        <Plus className="h-4 w-4" strokeWidth={1.5} />
       </button>
     </aside>
   )
