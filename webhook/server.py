@@ -8,6 +8,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DevOps AI Agent — Webhook Server")
 
+from ui.routes import router as ui_router
+from fastapi.staticfiles import StaticFiles
+app.include_router(ui_router)
+app.mount("/static", StaticFiles(directory="ui/static"), name="static")
+
 
 @app.on_event("startup")
 async def startup():
