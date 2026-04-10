@@ -135,6 +135,7 @@ class TestSlackNotifier:
 
             mock_client.chat_postMessage.assert_called_once()
             call_kwargs = mock_client.chat_postMessage.call_args.kwargs
-            assert call_kwargs["channel"] == "#devops-alerts"
+            from config import get_settings
+            assert call_kwargs["channel"] == get_settings().slack_channel
             assert "build-api" in call_kwargs["text"]
             assert len(call_kwargs["blocks"]) > 0

@@ -69,34 +69,58 @@ def _process_failure_sync(payload: dict, source: str) -> None:
     from parser.pipeline_parser import parse_failure
     from parser.log_extractor import extract_failed_logs
     from parser.log_cleaner import clean_log
-    from verification.models import VerificationReport
     from analyzer.context_builder import build_context
     from analyzer.llm_client import analyze
     from slack.notifier import send_failure_alert, update_with_analysis
     from slack.message_templates import failure_alert_blocks
+    from ui.event_bus import bus
+    from config import get_settings
+
+    settings = get_settings()
 
     try:
         # Step 1: Parse webhook payload
         ctx = parse_failure(payload, source=source)
         logger.info("[pipeline] Parsed: %s #%s stage=%s", ctx.job_name, ctx.build_number, ctx.failed_stage)
+        bus.publish({
+            "type": "step", "job": ctx.job_name, "build": ctx.build_number,
+            "stage": "WEBHOOK_RECEIVED",
+            "detail": f"stage: {ctx.failed_stage}", "status": "done",
+        })
 
         # Step 2: Extract and clean the failed stage log
         extracted = extract_failed_logs(ctx)
         cleaned = clean_log(extracted)
         logger.info("[pipeline] Cleaned log: %d chars", len(cleaned))
+        bus.publish({
+            "type": "step", "job": ctx.job_name, "build": ctx.build_number,
+            "stage": "LOG_EXTRACTED",
+            "detail": f"{len(cleaned)} chars after cleaning", "status": "done",
+        })
 
         # Step 3: Tool verification (best-effort — never blocks the pipeline)
         report = _run_verification(ctx, payload)
+        mismatch_count = len(getattr(report, "mismatched", []))
+        bus.publish({
+            "type": "step", "job": ctx.job_name, "build": ctx.build_number,
+            "stage": "TOOL_VERIFICATION",
+            "detail": f"{mismatch_count} mismatches found", "status": "done",
+        })
 
-        # Step 4: Post initial Slack alert (analysis pending)
-        ts = send_failure_alert(ctx, cleaned, report=report)
-        if not ts:
-            logger.error("[pipeline] Failed to post Slack alert — aborting")
-            return
-
-        logger.info("[pipeline] Slack alert posted: ts=%s", ts)
+        # Step 4: Post initial Slack alert (if enabled)
+        ts = None
+        if settings.slack_alerts == "enabled":
+            ts = send_failure_alert(ctx, cleaned, report=report)
+            if not ts:
+                logger.error("[pipeline] Failed to post Slack alert")
+            else:
+                logger.info("[pipeline] Slack alert posted: ts=%s", ts)
 
         # Step 5: Build LLM context and analyze
+        bus.publish({
+            "type": "step", "job": ctx.job_name, "build": ctx.build_number,
+            "stage": "CONTEXT_BUILT", "detail": "sending to LLM...", "status": "running",
+        })
         context_str = build_context(cleaned, report, ctx)
         analysis = analyze(context_str)
         logger.info(
@@ -105,11 +129,33 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             analysis.get("confidence", 0),
             analysis.get("fix_type"),
         )
+        bus.publish({
+            "type": "step", "job": ctx.job_name, "build": ctx.build_number,
+            "stage": "LLM_ANALYSIS",
+            "detail": analysis.get("root_cause", "")[:120],
+            "fix_type": analysis.get("fix_type"),
+            "confidence": analysis.get("confidence", 0),
+            "status": "done",
+        })
 
-        # Step 6: Update Slack message with analysis + action buttons
-        initial_blocks = failure_alert_blocks(ctx, cleaned, report=report)
-        update_with_analysis(ts, initial_blocks, analysis)
-        logger.info("[pipeline] Slack message updated with analysis")
+        # Step 6: Emit full analysis event for the UI card
+        bus.publish({
+            "type": "analysis_complete",
+            "job": ctx.job_name,
+            "build": ctx.build_number,
+            "failed_stage": ctx.failed_stage,
+            "root_cause": analysis.get("root_cause", ""),
+            "fix_suggestion": analysis.get("fix_suggestion", ""),
+            "fix_type": analysis.get("fix_type"),
+            "confidence": analysis.get("confidence", 0),
+            "log_excerpt": cleaned[:400],
+        })
+
+        # Step 7: Update Slack message (if enabled)
+        if settings.slack_alerts == "enabled" and ts:
+            initial_blocks = failure_alert_blocks(ctx, cleaned, report=report)
+            update_with_analysis(ts, initial_blocks, analysis)
+            logger.info("[pipeline] Slack message updated with analysis")
 
     except Exception as e:
         logger.exception("[pipeline] Unhandled error in failure processing: %s", e)
