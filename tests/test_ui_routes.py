@@ -11,7 +11,8 @@ def test_dashboard_returns_html():
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "devops-ai" in response.text.lower()
+    # React build title — matches <title>DevOps AI Agent</title>
+    assert "devops ai agent" in response.text.lower()
 
 
 def test_health_still_works():

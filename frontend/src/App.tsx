@@ -1,0 +1,149 @@
+import { useState, useCallback, useEffect } from 'react'
+import { Sidebar } from '@/components/Sidebar'
+import { Topbar } from '@/components/Topbar'
+import { SetupWizard } from '@/components/SetupWizard'
+import { PipelineFeed } from '@/components/PipelineFeed'
+import { ChatPanel } from '@/components/ChatPanel'
+import { JobsBrowser } from '@/components/JobsBrowser'
+import { SettingsPanel } from '@/components/SettingsPanel'
+import { useEventStream } from '@/hooks/useEventStream'
+import type { ActivePanel, BuildCard, SSEEvent } from '@/types'
+
+function makeKey(job: string, build: string | number) {
+  return `${job}_${build}`
+}
+
+export default function App() {
+  const [activePanel, setActivePanel] = useState<ActivePanel>('pipeline')
+  const [setupVisible, setSetupVisible] = useState(false)
+  const [repoName, setRepoName] = useState('')
+  const [jenkinsStatus, setJenkinsStatus] = useState<'connected' | 'disconnected' | 'unknown'>('unknown')
+  const [cards, setCards] = useState<Map<string, BuildCard>>(new Map())
+  const [bootDone, setBootDone] = useState(false)
+
+  // Bootstrap: fetch settings from server to pre-populate repo name
+  useEffect(() => {
+    fetch('/api/settings')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.github_repo) setRepoName(data.github_repo)
+        if (data.configured) {
+          setJenkinsStatus('connected')
+          localStorage.setItem('devops_ai_configured', '1')
+          localStorage.setItem('devops_ai_repo', data.github_repo ?? '')
+        } else if (!localStorage.getItem('devops_ai_configured')) {
+          // First run — no config on server, no localStorage: show wizard
+          setSetupVisible(true)
+        }
+      })
+      .catch(() => {
+        // Server not ready yet or no settings — fall back to localStorage
+        if (!localStorage.getItem('devops_ai_configured')) {
+          setSetupVisible(true)
+        } else {
+          setRepoName(localStorage.getItem('devops_ai_repo') ?? '')
+        }
+      })
+      .finally(() => setBootDone(true))
+  }, [])
+
+  const handleEvent = useCallback((event: SSEEvent) => {
+    if (event.type === 'step') {
+      const key = makeKey(event.job, event.build)
+      setCards((prev) => {
+        const next = new Map(prev)
+        const existing = next.get(key) ?? {
+          key,
+          job: event.job,
+          build: event.build,
+          steps: [],
+          dismissed: false,
+          createdAt: Date.now(),
+        }
+        const stepIdx = existing.steps.findIndex((s) => s.stage === event.stage)
+        const steps =
+          stepIdx >= 0
+            ? existing.steps.map((s, i) => (i === stepIdx ? event : s))
+            : [...existing.steps, event]
+        next.set(key, { ...existing, steps })
+        return next
+      })
+    }
+
+    if (event.type === 'analysis_complete') {
+      const key = makeKey(event.job, event.build)
+      setCards((prev) => {
+        const next = new Map(prev)
+        const existing = next.get(key)
+        if (existing) next.set(key, { ...existing, analysis: event })
+        return next
+      })
+    }
+
+    if (event.type === 'fix_result') {
+      const key = makeKey(event.job, event.build)
+      setCards((prev) => {
+        const next = new Map(prev)
+        const existing = next.get(key)
+        if (existing) next.set(key, { ...existing, fixResult: event })
+        return next
+      })
+    }
+  }, [])
+
+  useEventStream(handleEvent)
+
+  function dismissCard(key: string) {
+    setCards((prev) => {
+      const next = new Map(prev)
+      const existing = next.get(key)
+      if (existing) next.set(key, { ...existing, dismissed: true })
+      return next
+    })
+  }
+
+  function handleSetupSaved(repo: string) {
+    setRepoName(repo)
+    setSetupVisible(false)
+    setJenkinsStatus('connected')
+  }
+
+  const cardList = Array.from(cards.values()).sort((a, b) => b.createdAt - a.createdAt)
+
+  if (!bootDone) return null // wait for settings before deciding to show wizard
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-bg">
+      <SetupWizard
+        visible={setupVisible}
+        onClose={() => setSetupVisible(false)}
+        onSaved={handleSetupSaved}
+      />
+
+      <Sidebar
+        active={activePanel}
+        onNav={setActivePanel}
+        onNewProject={() => setSetupVisible(true)}
+      />
+
+      <div className="flex flex-col flex-1 overflow-hidden">
+        <Topbar
+          activePanel={activePanel}
+          repoName={repoName}
+          jenkinsStatus={jenkinsStatus}
+        />
+
+        <main className="flex-1 overflow-hidden">
+          {activePanel === 'pipeline' && (
+            <PipelineFeed cards={cardList} onDismiss={dismissCard} />
+          )}
+          {activePanel === 'chat' && <ChatPanel />}
+          {activePanel === 'jobs' && <JobsBrowser onJenkinsStatus={setJenkinsStatus} />}
+          {activePanel === 'settings' && (
+            <SettingsPanel onOpenSetup={() => setSetupVisible(true)} />
+          )}
+        </main>
+      </div>
+    </div>
+  )
+}

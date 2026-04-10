@@ -129,6 +129,11 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             analysis.get("confidence", 0),
             analysis.get("fix_type"),
         )
+        # Mark context step as done now that the LLM has returned
+        bus.publish({
+            "type": "step", "job": ctx.job_name, "build": ctx.build_number,
+            "stage": "CONTEXT_BUILT", "detail": "context built", "status": "done",
+        })
         bus.publish({
             "type": "step", "job": ctx.job_name, "build": ctx.build_number,
             "stage": "LLM_ANALYSIS",

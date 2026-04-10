@@ -97,19 +97,43 @@ async def trigger(payload: TriggerPayload):
 
 # ── Agent chat ─────────────────────────────────────────────────────────────
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
 class ChatPayload(BaseModel):
     message: str
+    history: Optional[list[ChatMessage]] = None
 
 
 @router.post("/api/chat")
 async def chat(payload: ChatPayload):
     from ui.chat_handler import handle_chat
 
+    history = [m.model_dump() for m in payload.history] if payload.history else None
+
     def generate():
-        for chunk in handle_chat(payload.message):
+        for chunk in handle_chat(payload.message, history=history):
             yield chunk
 
     return StreamingResponse(generate(), media_type="text/plain")
+
+
+# ── Settings (read active config for UI bootstrap) ─────────────────────────
+
+@router.get("/api/settings")
+async def settings():
+    from config import get_settings
+    s = get_settings()
+    return {
+        "github_repo": s.github_repo,
+        "jenkins_url": s.jenkins_url,
+        "jenkins_user": s.jenkins_user,
+        "slack_alerts": s.slack_alerts,
+        "llm_provider": s.llm_provider,
+        "configured": bool(s.github_repo and s.jenkins_url),
+    }
 
 
 # ── Fix execution ──────────────────────────────────────────────────────────
