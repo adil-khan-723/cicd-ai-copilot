@@ -7,6 +7,8 @@ import type { JenkinsJob } from '@/types'
 
 interface JobsBrowserProps {
   onJenkinsStatus?: (s: 'connected' | 'disconnected' | 'unknown') => void
+  wireStatus?:      Record<string, 'ok' | 'already' | 'err'>
+  onWireStatus?:    (name: string, status: 'ok' | 'already' | 'err') => void
 }
 
 function StatusDot({ status }: { status: string }) {
@@ -26,12 +28,11 @@ function StatusIcon({ status }: { status: string }) {
   return <AlertCircle className="h-3.5 w-3.5 text-text-dim" strokeWidth={1.5} />
 }
 
-export function JobsBrowser({ onJenkinsStatus }: JobsBrowserProps) {
+export function JobsBrowser({ onJenkinsStatus, wireStatus = {}, onWireStatus }: JobsBrowserProps) {
   const [jobs,      setJobs]      = useState<JenkinsJob[]>([])
   const [loading,   setLoading]   = useState(false)
   const [triggering,setTriggering]= useState<string | null>(null)
   const [wiring,    setWiring]    = useState<string | null>(null)
-  const [wireStatus,setWireStatus]= useState<Record<string, 'ok' | 'already' | 'err'>>({})
   const [error,     setError]     = useState('')
 
   async function loadJobs() {
@@ -71,9 +72,9 @@ export function JobsBrowser({ onJenkinsStatus }: JobsBrowserProps) {
         body: JSON.stringify({ job_name: name }),
       })
       const data = await res.json()
-      setWireStatus(prev => ({ ...prev, [name]: data.ok ? (data.already ? 'already' : 'ok') : 'err' }))
+      onWireStatus?.(name, data.ok ? (data.already ? 'already' : 'ok') : 'err')
     } catch {
-      setWireStatus(prev => ({ ...prev, [name]: 'err' }))
+      onWireStatus?.(name, 'err')
     } finally {
       setWiring(null)
     }

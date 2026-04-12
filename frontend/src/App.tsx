@@ -25,6 +25,13 @@ export default function App() {
   const [chatMessages,  setChatMessages]  = useState<ChatMessage[]>([])
   const [chatStreaming,  setChatStreaming]  = useState(false)
 
+  // ── Jobs wire-up state lifted so it survives panel switches ───────────────
+  const [wireStatus, setWireStatus] = useState<Record<string, 'ok' | 'already' | 'err'>>({})
+
+  function handleWireStatus(name: string, status: 'ok' | 'already' | 'err') {
+    setWireStatus(prev => ({ ...prev, [name]: status }))
+  }
+
   // Bootstrap: fetch server settings on load
   useEffect(() => {
     fetch('/api/settings')
@@ -181,7 +188,7 @@ export default function App() {
             />
           </div>
           <div className={activePanel === 'jobs' ? 'h-full' : 'hidden'}>
-            <JobsBrowser onJenkinsStatus={setJenkinsStatus} />
+            <JobsBrowser onJenkinsStatus={setJenkinsStatus} wireStatus={wireStatus} onWireStatus={handleWireStatus} />
           </div>
           <div className={activePanel === 'settings' ? 'h-full' : 'hidden'}>
             <SettingsPanel onOpenSetup={() => setSetupVisible(true)} />

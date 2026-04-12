@@ -188,12 +188,13 @@ async def inject_webhook(payload: InjectWebhookPayload):
 
 def _inject_webhook_blocks(job_name: str) -> dict:
     """
-    Reads the job's Groovy script from Jenkins, injects post { failure } and
-    post { success } webhook notification blocks if not already present, and
-    pushes the updated config back.
+    Reads the job's Groovy script from Jenkins, strips any existing post block,
+    then appends a clean post { failure + success } block with webhook calls.
+    Uses single-quoted Groovy strings to avoid all escaping issues.
     """
     import html as html_mod
     import xml.etree.ElementTree as ET
+    import re
     from config import get_settings
 
     settings = get_settings()
@@ -219,54 +220,55 @@ def _inject_webhook_blocks(job_name: str) -> dict:
 
         script = html_mod.unescape(script_el.text or "")
 
-        already_has_failure = 'webhook/pipeline-failure' in script
-        already_has_success = 'webhook/pipeline-success' in script
-
-        if already_has_failure and already_has_success:
+        if 'webhook/pipeline-failure' in script and 'webhook/pipeline-success' in script:
             return {"ok": True, "detail": "Already wired up — nothing to do.", "already": True}
 
-        failure_block = ""
-        success_block = ""
+        # Strip any existing post block entirely so we can replace with a clean one
+        # Match 'post {' ... balanced closing '}' at the same indent level
+        script_no_post = re.sub(
+            r'\n?\s*post\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',
+            '',
+            script,
+            flags=re.DOTALL,
+        ).rstrip()
 
-        if not already_has_failure:
-            failure_block = """
-    failure {
-      sh \\"\\"\\"#!/bin/sh
-        cat > /tmp/wh_payload.json << 'JSONEOF'
-{\\"job_name\\":\\"${JOB_NAME}\\",\\"build_number\\":\\"${BUILD_NUMBER}\\",\\"failed_stage\\":\\"unknown\\",\\"status\\":\\"FAILURE\\",\\"stages\\":[],\\"log\\":\\"Build failed - check Jenkins console\\"}
-JSONEOF
-        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-failure \\\\
-          -H \\"Content-Type: application/json\\" \\\\
-          -H \\"X-Jenkins-Event: run.finalized\\" \\\\
-          --data @/tmp/wh_payload.json && echo WEBHOOK_OK || echo WEBHOOK_FAILED
-      \\"\\"\\"
-    }"""
-
-        if not already_has_success:
-            success_block = """
-    success {
-      sh \\"\\"\\"#!/bin/sh
-        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-success \\\\
-          -H \\"Content-Type: application/json\\" \\\\
-          -H \\"X-Jenkins-Event: run.finalized\\" \\\\
-          -d \\"{\\\\\\"job_name\\\\\\":\\\\\\"${JOB_NAME}\\\\\\",\\\\\\"build_number\\\\\\":\\\\\\"${BUILD_NUMBER}\\\\\\"}\\" \\\\
-          && echo WEBHOOK_OK || echo WEBHOOK_FAILED
-      \\"\\"\\"
-    }"""
-
-        # If there's already a post { } block, inject inside it; otherwise add one
-        if 'post {' in script:
-            # Append inside existing post block before its closing brace
-            script = script.rstrip()
-            # Find last } that closes the post block — insert before it
-            post_idx = script.rfind('post {')
-            close_idx = script.rfind('}')
-            script = script[:close_idx] + failure_block + success_block + '\n  }' + script[close_idx+1:]
+        # Remove the pipeline's outer closing brace so we can append inside
+        if script_no_post.endswith('}'):
+            pipeline_body = script_no_post[:-1].rstrip()
         else:
-            post_block = '\n\n  post {' + failure_block + success_block + '\n  }'
-            script = script.rstrip().rstrip('}').rstrip() + post_block + '\n}'
+            pipeline_body = script_no_post
 
-        script_el.text = script
+        # ElementTree sets script_el.text and handles XML escaping automatically.
+        # This is plain Groovy — no manual escaping needed at the Python level.
+        # Using sh with a heredoc (proven to work in backend-api Jenkinsfile).
+        post_block = '''
+  post {
+    failure {
+      sh """#!/bin/sh
+        cat > /tmp/wh_payload.json << 'JSONEOF'
+{"job_name":"${JOB_NAME}","build_number":"${BUILD_NUMBER}","failed_stage":"unknown","status":"FAILURE","stages":[],"log":"Build failed - check Jenkins console"}
+JSONEOF
+        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-failure \\
+          -H "Content-Type: application/json" \\
+          -H "X-Jenkins-Event: run.finalized" \\
+          --data @/tmp/wh_payload.json && echo WEBHOOK_OK || echo WEBHOOK_FAILED
+      """
+    }
+    success {
+      sh """#!/bin/sh
+        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-success \\
+          -H "Content-Type: application/json" \\
+          -H "X-Jenkins-Event: run.finalized" \\
+          -d "{\\"job_name\\":\\"${JOB_NAME}\\",\\"build_number\\":\\"${BUILD_NUMBER}\\"}" \\
+          && echo WEBHOOK_OK || echo WEBHOOK_FAILED
+      """
+    }
+  }
+}'''
+
+        new_script = pipeline_body + post_block
+
+        script_el.text = new_script
         new_config = ET.tostring(tree, encoding='unicode', xml_declaration=False)
         new_config = "<?xml version='1.1' encoding='UTF-8'?>\n" + new_config
         server.reconfig_job(job_name, new_config)
