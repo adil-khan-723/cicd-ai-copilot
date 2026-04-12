@@ -33,9 +33,13 @@ export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardOldFailed 
     if (!jobMap.has(card.job)) jobMap.set(card.job, [])
     jobMap.get(card.job)!.push(card)
   }
-  // Sort builds within each group newest-first
+  // Sort builds within each group: success card first, then failures newest-first
   for (const builds of jobMap.values()) {
-    builds.sort((a, b) => b.createdAt - a.createdAt)
+    builds.sort((a, b) => {
+      if (a.successEvent && !b.successEvent) return -1
+      if (!a.successEvent && b.successEvent) return  1
+      return b.createdAt - a.createdAt
+    })
   }
   // Sort groups themselves by most recent build across each job
   const allGroups = Array.from(jobMap.entries())

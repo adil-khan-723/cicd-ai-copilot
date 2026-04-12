@@ -146,7 +146,7 @@ export default function App() {
     setCards(prev => {
       const next = new Map(prev)
       for (const [k, card] of next.entries()) {
-        if (card.job === job && !card.successEvent) next.delete(k)
+        if (card.job === job) next.delete(k)
       }
       return next
     })
