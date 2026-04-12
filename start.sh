@@ -42,11 +42,134 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 echo ""
 echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
 echo -e "  DevOps AI Agent"
 echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
 echo ""
+
+# ── Jenkins setup (runs standalone, skips server checks) ─────
+if [[ "$SETUP_JENKINS" == "true" ]]; then
+  [[ ! -f ".env" ]] && [[ -f ".env.example" ]] && cp .env.example .env
+
+  info "Setting up Jenkins integration..."
+
+  JENKINS_URL=$(grep -E '^JENKINS_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
+  JENKINS_USER=$(grep -E '^JENKINS_USER=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
+  JENKINS_TOKEN=$(grep -E '^JENKINS_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
+
+  if [[ -z "$JENKINS_URL" || -z "$JENKINS_USER" || -z "$JENKINS_TOKEN" ]]; then
+    die "JENKINS_URL, JENKINS_USER, and JENKINS_TOKEN must be set in .env before running --setup-jenkins"
+  fi
+
+  JENKINS_URL="${JENKINS_URL%/}"
+
+  if ! curl -sf -u "$JENKINS_USER:$JENKINS_TOKEN" "$JENKINS_URL/api/json" &>/dev/null; then
+    die "Cannot reach Jenkins at $JENKINS_URL — check URL and credentials in .env"
+  fi
+  ok "Jenkins reachable at $JENKINS_URL"
+
+  # Detect the right callback URL for Jenkins to reach this server.
+  # Override by setting AGENT_URL in .env.
+  AGENT_URL=$(grep -E '^AGENT_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
+  if [[ -z "$AGENT_URL" ]]; then
+    JENKINS_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i jenkins | head -1 || echo "")
+    if [[ -n "$JENKINS_CONTAINER" ]]; then
+      # Jenkins is in Docker — use host.docker.internal to reach the host
+      AGENT_URL="http://host.docker.internal:${PORT}/webhook/jenkins-notification"
+    else
+      AGENT_URL="http://localhost:${PORT}/webhook/jenkins-notification"
+    fi
+  fi
+  info "Listener will POST to: $AGENT_URL"
+
+  # Groovy script — bash variables expanded here, Groovy variables escaped
+  GROOVY_SCRIPT=$(cat <<GROOVY
+import hudson.model.listeners.RunListener
+import hudson.model.Run
+import groovy.json.JsonOutput
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.net.URI
+import java.time.Duration
+import jenkins.model.Jenkins
+
+class DevOpsAgentListener extends RunListener<Run> {
+    static final String ENDPOINT = "${AGENT_URL}"
+
+    void onFinalized(Run run) {
+        Thread.start("devops-notifier") {
+            try {
+                def buildUrl = ""
+                try { buildUrl = run.absoluteUrl } catch (e) { buildUrl = "" }
+                def payload = [
+                    name : run.parent.fullName,
+                    build: [number: run.number, phase: "FINALIZED",
+                            status: run.result?.toString() ?: "UNKNOWN", full_url: buildUrl]
+                ]
+                def body = JsonOutput.toJson(payload)
+                def client = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(Duration.ofSeconds(5)).build()
+                def request = HttpRequest.newBuilder()
+                    .uri(URI.create(ENDPOINT))
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build()
+                def response = client.send(request, HttpResponse.BodyHandlers.ofString())
+                println "[DevOpsAgent] \${run.parent.fullName} #\${run.number} \${run.result} -> HTTP \${response.statusCode()}"
+            } catch (Exception e) {
+                println "[DevOpsAgent] Failed: \${e.class.simpleName}: \${e.message}"
+            }
+        }
+    }
+}
+
+def extList = Jenkins.get().getExtensionList(RunListener.class)
+extList.findAll { it.class.simpleName == "DevOpsAgentListener" }.each { extList.remove(it) }
+extList.add(new DevOpsAgentListener())
+println "DevOpsAgentListener registered"
+GROOVY
+)
+
+  info "Registering Groovy listener in Jenkins..."
+  RESULT=$(curl -sf -X POST \
+    -u "$JENKINS_USER:$JENKINS_TOKEN" \
+    --data-urlencode "script=$GROOVY_SCRIPT" \
+    "$JENKINS_URL/scriptText" 2>&1) || {
+    die "Failed to run script in Jenkins. Ensure your API token has 'Overall/Administer' permission."
+  }
+
+  if echo "$RESULT" | grep -q "DevOpsAgentListener registered"; then
+    ok "Groovy listener registered in Jenkins"
+  else
+    warn "Unexpected response from Jenkins Script Console:"
+    echo "$RESULT"
+    die "Listener may not have registered — check the output above"
+  fi
+
+  # Persist to init.groovy.d so it survives Jenkins restarts
+  JENKINS_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i jenkins | head -1 || echo "")
+  if [[ -n "$JENKINS_CONTAINER" ]]; then
+    info "Persisting listener to ${JENKINS_CONTAINER}:/var/jenkins_home/init.groovy.d/ ..."
+    echo "$GROOVY_SCRIPT" | docker exec -i "$JENKINS_CONTAINER" bash -c \
+      "mkdir -p /var/jenkins_home/init.groovy.d && cat > /var/jenkins_home/init.groovy.d/devops_agent_listener.groovy"
+    ok "Listener will auto-register after every Jenkins restart"
+  else
+    warn "No local Jenkins Docker container found — listener is active for this session only."
+    warn "To persist across restarts, copy the script manually:"
+    warn "  scripts/devops_agent_listener.groovy → JENKINS_HOME/init.groovy.d/"
+  fi
+
+  echo ""
+  ok "Jenkins setup complete. Trigger any job to see it appear in the UI."
+  echo ""
+  exit 0
+fi
 
 # ── 1. Python version ────────────────────────────────────────
 info "Checking Python..."
@@ -62,22 +185,17 @@ fi
 ok "Python $PYVER"
 
 # ── 2. Virtualenv / pip ──────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
 VENV_DIR=".venv"
 if [[ ! -d "$VENV_DIR" ]]; then
   info "Creating virtualenv in .venv ..."
   python3 -m venv "$VENV_DIR"
 fi
 
-# Activate venv
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
 # ── 3. Python deps ───────────────────────────────────────────
 info "Checking Python dependencies..."
-# Fast check: see if uvicorn is importable (sentinel for all deps being installed)
 if ! python -c "import uvicorn" &>/dev/null || ! python -c "import fastapi" &>/dev/null; then
   info "Installing Python dependencies from requirements.txt ..."
   pip install -q --upgrade pip
@@ -152,139 +270,7 @@ if [[ "$LLM_PROVIDER" == "ollama" ]]; then
   fi
 fi
 
-# ── 8. Jenkins setup (--setup-jenkins) ──────────────────────
-setup_jenkins() {
-  info "Setting up Jenkins integration..."
-
-  # Read credentials from .env
-  JENKINS_URL=$(grep -E '^JENKINS_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
-  JENKINS_USER=$(grep -E '^JENKINS_USER=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
-  JENKINS_TOKEN=$(grep -E '^JENKINS_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
-
-  if [[ -z "$JENKINS_URL" || -z "$JENKINS_USER" || -z "$JENKINS_TOKEN" ]]; then
-    die "JENKINS_URL, JENKINS_USER, and JENKINS_TOKEN must be set in .env before running --setup-jenkins"
-  fi
-
-  # Strip trailing slash
-  JENKINS_URL="${JENKINS_URL%/}"
-
-  # Check Jenkins is reachable
-  if ! curl -sf -u "$JENKINS_USER:$JENKINS_TOKEN" "$JENKINS_URL/api/json" &>/dev/null; then
-    die "Cannot reach Jenkins at $JENKINS_URL — check URL and credentials in .env"
-  fi
-  ok "Jenkins reachable at $JENKINS_URL"
-
-  # Detect endpoint URL: if Jenkins runs in Docker, use host.docker.internal; otherwise localhost
-  # User can override by setting AGENT_URL in .env
-  AGENT_URL=$(grep -E '^AGENT_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
-  if [[ -z "$AGENT_URL" ]]; then
-    # Check if Jenkins is running in Docker
-    if curl -sf -u "$JENKINS_USER:$JENKINS_TOKEN" "$JENKINS_URL/api/json" &>/dev/null \
-        && docker inspect jenkins &>/dev/null 2>&1; then
-      AGENT_URL="http://host.docker.internal:${PORT}/webhook/jenkins-notification"
-    else
-      AGENT_URL="http://localhost:${PORT}/webhook/jenkins-notification"
-    fi
-  fi
-  info "Listener will POST to: $AGENT_URL"
-
-  # Build the Groovy script with the correct endpoint
-  GROOVY_SCRIPT=$(cat <<GROOVY
-import hudson.model.listeners.RunListener
-import hudson.model.Run
-import groovy.json.JsonOutput
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.net.URI
-import java.time.Duration
-import jenkins.model.Jenkins
-
-class DevOpsAgentListener extends RunListener<Run> {
-    static final String ENDPOINT = "${AGENT_URL}"
-
-    void onFinalized(Run run) {
-        Thread.start("devops-notifier") {
-            try {
-                def buildUrl = ""
-                try { buildUrl = run.absoluteUrl } catch (e) { buildUrl = "" }
-                def payload = [
-                    name : run.parent.fullName,
-                    build: [number: run.number, phase: "FINALIZED",
-                            status: run.result?.toString() ?: "UNKNOWN", full_url: buildUrl]
-                ]
-                def body = JsonOutput.toJson(payload)
-                def client = HttpClient.newBuilder()
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .connectTimeout(Duration.ofSeconds(5)).build()
-                def request = HttpRequest.newBuilder()
-                    .uri(URI.create(ENDPOINT))
-                    .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(10))
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build()
-                def response = client.send(request, HttpResponse.BodyHandlers.ofString())
-                println "[DevOpsAgent] \${run.parent.fullName} #\${run.number} \${run.result} -> HTTP \${response.statusCode()}"
-            } catch (Exception e) {
-                println "[DevOpsAgent] Failed: \${e.class.simpleName}: \${e.message}"
-            }
-        }
-    }
-}
-
-def extList = Jenkins.get().getExtensionList(RunListener.class)
-extList.findAll { it.class.simpleName == "DevOpsAgentListener" }.each { extList.remove(it) }
-extList.add(new DevOpsAgentListener())
-println "DevOpsAgentListener registered"
-GROOVY
-)
-
-  # Run the script via Jenkins Script Console
-  info "Registering Groovy listener in Jenkins..."
-  RESULT=$(curl -sf -X POST \
-    -u "$JENKINS_USER:$JENKINS_TOKEN" \
-    --data-urlencode "script=$GROOVY_SCRIPT" \
-    "$JENKINS_URL/scriptText" 2>&1) || {
-    die "Failed to run script in Jenkins. Ensure your token has 'Overall/Administer' permission."
-  }
-
-  if echo "$RESULT" | grep -q "DevOpsAgentListener registered"; then
-    ok "Groovy listener registered in Jenkins"
-  else
-    warn "Unexpected response from Jenkins Script Console:"
-    echo "$RESULT"
-    die "Listener may not have registered — check the output above"
-  fi
-
-  # Write init.groovy.d for restart persistence
-  # Works if Jenkins is a local Docker container named 'jenkins'
-  JENKINS_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i jenkins | head -1 || echo "")
-  INIT_SCRIPT_PATH="init.groovy.d/devops_agent_listener.groovy"
-
-  if [[ -n "$JENKINS_CONTAINER" ]]; then
-    info "Writing listener to ${JENKINS_CONTAINER}:/var/jenkins_home/${INIT_SCRIPT_PATH} (survives restarts)..."
-    echo "$GROOVY_SCRIPT" | docker exec -i "$JENKINS_CONTAINER" bash -c \
-      "mkdir -p /var/jenkins_home/init.groovy.d && cat > /var/jenkins_home/${INIT_SCRIPT_PATH}"
-    ok "Listener persisted to init.groovy.d — will auto-register after every Jenkins restart"
-  else
-    warn "No local Jenkins Docker container found — listener is registered for this session only."
-    warn "To persist across restarts, copy the Groovy script to Jenkins' init.groovy.d directory manually:"
-    warn "  Copy: scripts/devops_agent_listener.groovy → JENKINS_HOME/init.groovy.d/"
-  fi
-
-  echo ""
-  ok "Jenkins setup complete. Trigger any job to see it appear in the UI."
-  echo ""
-}
-
-if [[ "$SETUP_JENKINS" == "true" ]]; then
-  # Ensure .env is present and deps are loaded first
-  [[ ! -f ".env" ]] && [[ -f ".env.example" ]] && cp .env.example .env
-  source "$VENV_DIR/bin/activate" 2>/dev/null || true
-  setup_jenkins
-  exit 0
-fi
-
-# ── 9. Port availability ─────────────────────────────────────
+# ── 8. Port availability ─────────────────────────────────────
 if lsof -iTCP:"$PORT" -sTCP:LISTEN &>/dev/null; then
   warn "Port $PORT is already in use — attempting to stop existing server..."
   PID=$(lsof -ti TCP:"$PORT" -sTCP:LISTEN | head -1)
