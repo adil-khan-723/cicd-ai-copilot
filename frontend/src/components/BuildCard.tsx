@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { StageGraph } from './StageGraph'
+import { AgentStepRow, PipelineStageRow } from './StageGraph'
 import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType } from '@/types'
 
@@ -14,8 +14,9 @@ const DIAGNOSTIC_TYPES = new Set([
 ])
 
 export function BuildCard({ card, onDismiss }: { card: BuildCardType; onDismiss: (k: string) => void }) {
-  const [expanded, setExpanded] = useState(true)
-  const [fixing,   setFixing]   = useState(false)
+  const [expanded,      setExpanded]      = useState(true)
+  const [agentExpanded, setAgentExpanded] = useState(false)
+  const [fixing,        setFixing]        = useState(false)
 
   const { analysis, fixResult, steps, dismissed } = card
   const isRunning  = !analysis && steps.some(s => s.status === 'running')
@@ -107,7 +108,29 @@ export function BuildCard({ card, onDismiss }: { card: BuildCardType; onDismiss:
       {/* Body */}
       {expanded && (
         <div className="px-4 pb-4 space-y-3">
-          <StageGraph stages={steps} />
+          {/* Jenkins / GHA pipeline stages — always visible */}
+          {analysis?.pipeline_stages && analysis.pipeline_stages.length > 0 && (
+            <div>
+              <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-widest mb-1.5">
+                Pipeline Stages
+              </p>
+              <PipelineStageRow stages={analysis.pipeline_stages} />
+            </div>
+          )}
+
+          {/* Agent steps — collapsed by default, toggle to reveal */}
+          <div>
+            <button
+              onClick={() => setAgentExpanded(v => !v)}
+              className="flex items-center gap-1.5 text-[10px] font-mono font-semibold text-text-dim uppercase tracking-widest hover:text-text-muted transition-colors cursor-pointer mb-1.5"
+            >
+              {agentExpanded
+                ? <ChevronDown  className="h-3 w-3" strokeWidth={2} />
+                : <ChevronRight className="h-3 w-3" strokeWidth={2} />}
+              Agent Steps
+            </button>
+            {agentExpanded && <AgentStepRow stages={steps} />}
+          </div>
 
           {analysis && (
             <div className="rounded-lg border border-glass bg-surface/60 p-3.5 space-y-3">

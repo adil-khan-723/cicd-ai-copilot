@@ -11,6 +11,11 @@ export interface StepEvent {
   confidence?: number
 }
 
+export interface PipelineStage {
+  name: string
+  status: 'passed' | 'failed' | 'skipped'
+}
+
 export interface AnalysisCompleteEvent {
   type: 'analysis_complete'
   job: string
@@ -21,6 +26,7 @@ export interface AnalysisCompleteEvent {
   fix_type: string
   confidence: number
   log_excerpt: string
+  pipeline_stages: PipelineStage[]
 }
 
 export interface FixResultEvent {

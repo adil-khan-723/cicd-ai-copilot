@@ -159,6 +159,11 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "fix_type": analysis.get("fix_type"),
             "confidence": analysis.get("confidence", 0),
             "log_excerpt": cleaned[:400],
+            # Ordered Jenkins/GHA stages with pass/fail/skipped status
+            "pipeline_stages": [
+                {"name": name, "status": status}
+                for name, status in ctx.pipeline_stages
+            ],
         })
 
         # Step 7: Update Slack message (if enabled)

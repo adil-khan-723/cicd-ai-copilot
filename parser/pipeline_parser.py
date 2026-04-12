@@ -29,6 +29,11 @@ def _parse_jenkins(payload: dict) -> FailureContext:
         or _extract_jenkins_stage(raw_log)
     )
 
+    # Parse ordered stage list from payload if provided
+    # Expected format: [{"name": "Test", "status": "failed"}, ...]
+    # or a simple list of strings (all treated as the pipeline definition)
+    pipeline_stages = _parse_stage_list(payload.get("stages", []), failed_stage)
+
     return FailureContext(
         job_name=job_name,
         build_number=build_number,
@@ -36,7 +41,40 @@ def _parse_jenkins(payload: dict) -> FailureContext:
         platform="jenkins",
         raw_log=raw_log,
         branch=payload.get("branch", ""),
+        pipeline_stages=pipeline_stages,
     )
+
+
+def _parse_stage_list(stages_payload, failed_stage: str) -> list[tuple[str, str]]:
+    """
+    Normalise stages payload into list of (name, status) tuples.
+    Accepts:
+      - list of {"name": str, "status": str}
+      - list of strings (stage names only — status inferred from failed_stage)
+    """
+    if not stages_payload:
+        return []
+    result = []
+    seen_failed = False
+    for s in stages_payload:
+        if isinstance(s, dict):
+            name = s.get("name", "")
+            status = s.get("status", "passed").lower()
+        elif isinstance(s, str):
+            name = s
+            # Everything before failed_stage passed, failed_stage failed, rest skipped
+            if name == failed_stage:
+                status = "failed"
+                seen_failed = True
+            elif seen_failed:
+                status = "skipped"
+            else:
+                status = "passed"
+        else:
+            continue
+        if name:
+            result.append((name, status))
+    return result
 
 
 def _parse_github(payload: dict) -> FailureContext:
