@@ -57,8 +57,6 @@ export interface BuildCard {
   fixResult?: FixResultEvent
   dismissed: boolean
   createdAt: number
-  // Set when this card represents a successful build that resolved a prior failure
-  successEvent?: BuildSuccessEvent
 }
 
 export interface JenkinsJob {

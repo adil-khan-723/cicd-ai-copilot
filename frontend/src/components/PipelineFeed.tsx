@@ -1,55 +1,38 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Activity, Terminal, Trash2, CheckCircle2, X } from 'lucide-react'
-import { BuildCard, SuccessBuildCard } from './BuildCard'
+import { Activity, Terminal, Trash2 } from 'lucide-react'
+import { BuildCard } from './BuildCard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType } from '@/types'
 
 interface PipelineFeedProps {
-  cards:               BuildCardType[]
-  onDismiss:           (k: string) => void
-  onClearAll:          () => void
-  onDiscardOldFailed:  (job: string) => void
+  cards:      BuildCardType[]
+  onDismiss:  (k: string) => void
+  onClearAll: () => void
 }
 
-export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardOldFailed }: PipelineFeedProps) {
+export function PipelineFeed({ cards, onDismiss, onClearAll }: PipelineFeedProps) {
   const [activeJob, setActiveJob] = useState<string>('all')
 
   // Never show dismissed cards
   const visible = cards.filter(c => !c.dismissed)
 
-  // Jobs that have a success card AND still have old failed cards (for discard banner)
-  const jobsNeedingDiscard = new Set(
-    visible
-      .filter(c => c.successEvent)
-      .map(c => c.job)
-      .filter(job => visible.some(c => c.job === job && !c.successEvent))
-  )
-
-  // Pre-group all visible cards by job — newest build first within each group
+  // Pre-group by job — newest build first within each group
   const jobMap = new Map<string, BuildCardType[]>()
   for (const card of visible) {
     if (!jobMap.has(card.job)) jobMap.set(card.job, [])
     jobMap.get(card.job)!.push(card)
   }
-  // Sort builds within each group: success card first, then failures newest-first
   for (const builds of jobMap.values()) {
-    builds.sort((a, b) => {
-      if (a.successEvent && !b.successEvent) return -1
-      if (!a.successEvent && b.successEvent) return  1
-      return b.createdAt - a.createdAt
-    })
+    builds.sort((a, b) => b.createdAt - a.createdAt)
   }
-  // Sort groups themselves by most recent build across each job
+  // Sort groups by most recent build
   const allGroups = Array.from(jobMap.entries())
     .map(([job, builds]) => ({ job, cards: builds, latest: builds[0].createdAt }))
     .sort((a, b) => b.latest - a.latest)
 
-  // All unique jobs in order of most recent activity
   const jobs = allGroups.map(g => g.job)
-
-  // Apply job filter
   const groups = activeJob === 'all'
     ? allGroups
     : allGroups.filter(g => g.job === activeJob)
@@ -107,8 +90,6 @@ export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardOldFailed 
             label={job}
             count={visible.filter(c => c.job === job).length}
             active={activeJob === job}
-            hasSuccess={visible.some(c => c.job === job && c.successEvent)}
-            hasFailure={visible.some(c => c.job === job && !c.successEvent)}
             onClick={() => setActiveJob(activeJob === job ? 'all' : job)}
           />
         ))}
@@ -120,14 +101,14 @@ export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardOldFailed 
           <AnimatePresence initial={false}>
             {groups.map(group => (
               <motion.div
-                key={`group-${group.job}-${activeJob}`}
+                key={`group-${group.job}`}
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ type: 'spring', stiffness: 400, damping: 35 }}
                 className="flex flex-col gap-2"
               >
-                {/* Job group header — only shown in "All" view */}
+                {/* Job group header — only in All view */}
                 {activeJob === 'all' && (
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-mono font-semibold text-text-dim uppercase tracking-widest">
@@ -140,50 +121,12 @@ export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardOldFailed 
                   </div>
                 )}
 
-                {/* Discard banner for this job */}
-                <AnimatePresence>
-                  {jobsNeedingDiscard.has(group.job) && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="flex items-center gap-2.5 rounded-lg border border-success/20 bg-success-dim px-3.5 py-2.5">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" strokeWidth={2} />
-                        <p className="text-xs text-text-muted flex-1">
-                          <span className="font-mono font-semibold text-success">{group.job}</span> passed —
-                          discard old failure cards?
-                        </p>
-                        <Button
-                          variant="success"
-                          size="sm"
-                          onClick={() => onDiscardOldFailed(group.job)}
-                          className="text-xs h-6 px-2.5"
-                        >
-                          Discard
-                        </Button>
-                        <button
-                          onClick={() => onDiscardOldFailed(group.job)}
-                          className="text-text-dim hover:text-text-muted transition-colors cursor-pointer"
-                          title="Dismiss"
-                        >
-                          <X className="h-3.5 w-3.5" strokeWidth={1.5} />
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Build cards for this job */}
+                {/* Build cards */}
                 <div className="flex flex-col gap-2">
                   <AnimatePresence initial={false}>
-                    {group.cards.map(card =>
-                      card.successEvent
-                        ? <SuccessBuildCard key={card.key} card={card} onDismiss={onDismiss} />
-                        : <BuildCard       key={card.key} card={card} onDismiss={onDismiss} />
-                    )}
+                    {group.cards.map(card => (
+                      <BuildCard key={card.key} card={card} onDismiss={onDismiss} />
+                    ))}
                   </AnimatePresence>
                 </div>
               </motion.div>
@@ -195,23 +138,14 @@ export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardOldFailed 
   )
 }
 
-// ── Job tab pill ───────────────────────────────────────────────────────────────
-
 interface JobTabProps {
-  label:       string
-  count:       number
-  active:      boolean
-  hasSuccess?: boolean
-  hasFailure?: boolean
-  onClick:     () => void
+  label:   string
+  count:   number
+  active:  boolean
+  onClick: () => void
 }
 
-function JobTab({ label, count, active, hasSuccess, hasFailure, onClick }: JobTabProps) {
-  const dotColor =
-    hasFailure && hasSuccess ? 'bg-warning' :
-    hasFailure               ? 'bg-error'   :
-    hasSuccess               ? 'bg-success'  : 'bg-text-dim'
-
+function JobTab({ label, count, active, onClick }: JobTabProps) {
   return (
     <button
       onClick={onClick}
@@ -223,10 +157,6 @@ function JobTab({ label, count, active, hasSuccess, hasFailure, onClick }: JobTa
           : 'border-glass bg-surface/40 text-text-dim hover:text-text-muted hover:border-glass/80',
       )}
     >
-      {/* Status dot — only for job tabs, not "All" */}
-      {label !== 'All' && (
-        <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', dotColor)} />
-      )}
       <span>{label}</span>
       <span className={cn(
         'ml-0.5 rounded-full px-1.5 py-0.5 text-[10px] leading-none',

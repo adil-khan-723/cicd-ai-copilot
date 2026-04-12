@@ -108,19 +108,12 @@ export default function App() {
     }
 
     if (event.type === 'build_success') {
-      const successKey = makeKey(event.job, event.build)
+      // Job passed — remove all cards for this job immediately
       setCards(prev => {
         const next = new Map(prev)
-        // Add success card (keep old failed cards — user will be prompted to discard)
-        next.set(successKey, {
-          key: successKey,
-          job: event.job,
-          build: event.build,
-          steps: [],
-          dismissed: false,
-          createdAt: Date.now(),
-          successEvent: event,
-        })
+        for (const [k, card] of next.entries()) {
+          if (card.job === event.job) next.delete(k)
+        }
         return next
       })
     }
@@ -139,17 +132,6 @@ export default function App() {
 
   function clearFeed() {
     setCards(new Map())
-  }
-
-  function discardOldFailed(job: string) {
-    if (!job) return
-    setCards(prev => {
-      const next = new Map(prev)
-      for (const [k, card] of next.entries()) {
-        if (card.job === job) next.delete(k)
-      }
-      return next
-    })
   }
 
   function handleSetupSaved(repo: string) {
@@ -193,7 +175,7 @@ export default function App() {
         */}
         <main className="flex-1 overflow-hidden relative">
           <div className={activePanel === 'pipeline' ? 'h-full' : 'hidden'}>
-            <PipelineFeed cards={cardList} onDismiss={dismissCard} onClearAll={clearFeed} onDiscardOldFailed={discardOldFailed} />
+            <PipelineFeed cards={cardList} onDismiss={dismissCard} onClearAll={clearFeed} />
           </div>
           <div className={activePanel === 'chat' ? 'h-full' : 'hidden'}>
             <ChatPanel
