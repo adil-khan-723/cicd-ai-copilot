@@ -7,37 +7,39 @@ import { ChatPanel } from '@/components/ChatPanel'
 import { JobsBrowser } from '@/components/JobsBrowser'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { useEventStream } from '@/hooks/useEventStream'
-import type { ActivePanel, BuildCard, SSEEvent } from '@/types'
+import type { ActivePanel, BuildCard, ChatMessage, SSEEvent } from '@/types'
 
 function makeKey(job: string, build: string | number) {
   return `${job}_${build}`
 }
 
 export default function App() {
-  const [activePanel, setActivePanel] = useState<ActivePanel>('pipeline')
-  const [setupVisible, setSetupVisible] = useState(false)
-  const [repoName, setRepoName] = useState('')
+  const [activePanel,   setActivePanel]   = useState<ActivePanel>('pipeline')
+  const [setupVisible,  setSetupVisible]  = useState(false)
+  const [repoName,      setRepoName]      = useState('')
   const [jenkinsStatus, setJenkinsStatus] = useState<'connected' | 'disconnected' | 'unknown'>('unknown')
-  const [cards, setCards] = useState<Map<string, BuildCard>>(new Map())
-  const [bootDone, setBootDone] = useState(false)
+  const [cards,         setCards]         = useState<Map<string, BuildCard>>(new Map())
+  const [bootDone,      setBootDone]      = useState(false)
 
-  // Bootstrap: fetch settings from server to pre-populate repo name
+  // ── Chat state lifted here so it survives panel switches ─────────────────
+  const [chatMessages,  setChatMessages]  = useState<ChatMessage[]>([])
+  const [chatStreaming,  setChatStreaming]  = useState(false)
+
+  // Bootstrap: fetch server settings on load
   useEffect(() => {
     fetch('/api/settings')
-      .then((r) => r.json())
-      .then((data) => {
+      .then(r => r.json())
+      .then(data => {
         if (data.github_repo) setRepoName(data.github_repo)
         if (data.configured) {
           setJenkinsStatus('connected')
           localStorage.setItem('devops_ai_configured', '1')
           localStorage.setItem('devops_ai_repo', data.github_repo ?? '')
         } else if (!localStorage.getItem('devops_ai_configured')) {
-          // First run — no config on server, no localStorage: show wizard
           setSetupVisible(true)
         }
       })
       .catch(() => {
-        // Server not ready yet or no settings — fall back to localStorage
         if (!localStorage.getItem('devops_ai_configured')) {
           setSetupVisible(true)
         } else {
@@ -47,24 +49,20 @@ export default function App() {
       .finally(() => setBootDone(true))
   }, [])
 
+  // SSE event handler
   const handleEvent = useCallback((event: SSEEvent) => {
     if (event.type === 'step') {
       const key = makeKey(event.job, event.build)
-      setCards((prev) => {
+      setCards(prev => {
         const next = new Map(prev)
         const existing = next.get(key) ?? {
-          key,
-          job: event.job,
-          build: event.build,
-          steps: [],
-          dismissed: false,
-          createdAt: Date.now(),
+          key, job: event.job, build: event.build,
+          steps: [], dismissed: false, createdAt: Date.now(),
         }
-        const stepIdx = existing.steps.findIndex((s) => s.stage === event.stage)
-        const steps =
-          stepIdx >= 0
-            ? existing.steps.map((s, i) => (i === stepIdx ? event : s))
-            : [...existing.steps, event]
+        const idx = existing.steps.findIndex(s => s.stage === event.stage)
+        const steps = idx >= 0
+          ? existing.steps.map((s, i) => i === idx ? event : s)
+          : [...existing.steps, event]
         next.set(key, { ...existing, steps })
         return next
       })
@@ -72,7 +70,7 @@ export default function App() {
 
     if (event.type === 'analysis_complete') {
       const key = makeKey(event.job, event.build)
-      setCards((prev) => {
+      setCards(prev => {
         const next = new Map(prev)
         const existing = next.get(key)
         if (existing) next.set(key, { ...existing, analysis: event })
@@ -82,7 +80,7 @@ export default function App() {
 
     if (event.type === 'fix_result') {
       const key = makeKey(event.job, event.build)
-      setCards((prev) => {
+      setCards(prev => {
         const next = new Map(prev)
         const existing = next.get(key)
         if (existing) next.set(key, { ...existing, fixResult: event })
@@ -94,12 +92,16 @@ export default function App() {
   useEventStream(handleEvent)
 
   function dismissCard(key: string) {
-    setCards((prev) => {
+    setCards(prev => {
       const next = new Map(prev)
       const existing = next.get(key)
       if (existing) next.set(key, { ...existing, dismissed: true })
       return next
     })
+  }
+
+  function clearFeed() {
+    setCards(new Map())
   }
 
   function handleSetupSaved(repo: string) {
@@ -110,7 +112,7 @@ export default function App() {
 
   const cardList = Array.from(cards.values()).sort((a, b) => b.createdAt - a.createdAt)
 
-  if (!bootDone) return null // wait for settings before deciding to show wizard
+  if (!bootDone) return null
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
@@ -133,15 +135,28 @@ export default function App() {
           jenkinsStatus={jenkinsStatus}
         />
 
-        <main className="flex-1 overflow-hidden">
-          {activePanel === 'pipeline' && (
-            <PipelineFeed cards={cardList} onDismiss={dismissCard} />
-          )}
-          {activePanel === 'chat' && <ChatPanel />}
-          {activePanel === 'jobs' && <JobsBrowser onJenkinsStatus={setJenkinsStatus} />}
-          {activePanel === 'settings' && (
+        {/*
+          All panels stay mounted — hidden via CSS so state is never lost.
+          Chat messages, scroll position, and in-flight streams survive panel switches.
+        */}
+        <main className="flex-1 overflow-hidden relative">
+          <div className={activePanel === 'pipeline' ? 'h-full' : 'hidden'}>
+            <PipelineFeed cards={cardList} onDismiss={dismissCard} onClearAll={clearFeed} />
+          </div>
+          <div className={activePanel === 'chat' ? 'h-full' : 'hidden'}>
+            <ChatPanel
+              messages={chatMessages}
+              setMessages={setChatMessages}
+              streaming={chatStreaming}
+              setStreaming={setChatStreaming}
+            />
+          </div>
+          <div className={activePanel === 'jobs' ? 'h-full' : 'hidden'}>
+            <JobsBrowser onJenkinsStatus={setJenkinsStatus} />
+          </div>
+          <div className={activePanel === 'settings' ? 'h-full' : 'hidden'}>
             <SettingsPanel onOpenSetup={() => setSetupVisible(true)} />
-          )}
+          </div>
         </main>
       </div>
     </div>

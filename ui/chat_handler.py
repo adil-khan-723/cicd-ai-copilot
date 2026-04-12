@@ -57,8 +57,7 @@ def handle_chat(
         else:
             full_prompt = message.strip()
 
-        response = provider.complete(full_prompt, system=_SYSTEM_PROMPT)
-        yield response
+        yield from provider.stream_complete(full_prompt, system=_SYSTEM_PROMPT)
 
     except Exception as e:
         logger.error("Chat handler error: %s", e)

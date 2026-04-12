@@ -4,15 +4,9 @@ import { Send, Bot, User, CheckCircle2, Loader2, GitBranch, Sparkles } from 'luc
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import type { ChatMessage as Message } from '@/types'
 
-interface HistoryEntry { role: 'user' | 'assistant'; content: string }
-interface Message extends HistoryEntry {
-  id: string
-  pipeline?: string
-  pipelinePlatform?: 'jenkins' | 'github'
-  committed?: boolean
-  isStreaming?: boolean
-}
+type HistoryEntry = { role: 'user' | 'assistant'; content: string }
 
 const EXAMPLES = [
   'Generate a Python CI pipeline for Jenkins with Docker build',
@@ -63,10 +57,15 @@ function MessageContent({ content }: { content: string }) {
   )
 }
 
-export function ChatPanel() {
-  const [messages,   setMessages]   = useState<Message[]>([])
+interface ChatPanelProps {
+  messages:    Message[]
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>
+  streaming:   boolean
+  setStreaming: React.Dispatch<React.SetStateAction<boolean>>
+}
+
+export function ChatPanel({ messages, setMessages, streaming, setStreaming }: ChatPanelProps) {
   const [input,      setInput]      = useState('')
-  const [streaming,  setStreaming]  = useState(false)
   const [committing, setCommitting] = useState<string | null>(null)
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)

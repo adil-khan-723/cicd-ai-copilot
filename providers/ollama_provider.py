@@ -1,4 +1,6 @@
+import json
 import httpx
+from typing import Generator
 from providers.base import BaseLLMProvider
 from config import get_settings
 
@@ -30,6 +32,42 @@ class OllamaProvider(BaseLLMProvider):
             )
             response.raise_for_status()
             return response.json()["response"]
+        except httpx.ConnectError:
+            raise RuntimeError(
+                f"Cannot reach Ollama at {self._base_url}. "
+                "Is Ollama running? Try: ollama serve"
+            )
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Ollama returned {e.response.status_code}: {e.response.text}")
+
+    def stream_complete(self, prompt: str, system: str = "") -> Generator[str, None, None]:
+        """Stream tokens from Ollama as they are generated."""
+        payload = {
+            "model": self._model,
+            "prompt": prompt,
+            "system": system,
+            "stream": True,
+        }
+        try:
+            with httpx.stream(
+                "POST",
+                f"{self._base_url}/api/generate",
+                json=payload,
+                timeout=self._timeout,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    token = data.get("response", "")
+                    if token:
+                        yield token
+                    if data.get("done"):
+                        break
         except httpx.ConnectError:
             raise RuntimeError(
                 f"Cannot reach Ollama at {self._base_url}. "

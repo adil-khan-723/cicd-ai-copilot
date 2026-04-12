@@ -61,3 +61,17 @@ export interface SetupFormData {
 }
 
 export type ActivePanel = 'pipeline' | 'chat' | 'jobs' | 'settings'
+
+// Chat
+export interface ChatHistoryEntry {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface ChatMessage extends ChatHistoryEntry {
+  id: string
+  pipeline?: string
+  pipelinePlatform?: 'jenkins' | 'github'
+  committed?: boolean
+  isStreaming?: boolean
+}
