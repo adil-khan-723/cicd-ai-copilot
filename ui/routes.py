@@ -172,6 +172,110 @@ async def fix(payload: FixPayload):
     return {"success": result.success, "fix_type": result.fix_type, "detail": result.detail}
 
 
+# ── Inject webhook post blocks into a Jenkins job ─────────────────────────
+
+class InjectWebhookPayload(BaseModel):
+    job_name: str
+
+
+@router.post("/api/inject-webhook")
+async def inject_webhook(payload: InjectWebhookPayload):
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, _inject_webhook_blocks, payload.job_name
+    )
+    return result
+
+
+def _inject_webhook_blocks(job_name: str) -> dict:
+    """
+    Reads the job's Groovy script from Jenkins, injects post { failure } and
+    post { success } webhook notification blocks if not already present, and
+    pushes the updated config back.
+    """
+    import html as html_mod
+    import xml.etree.ElementTree as ET
+    from config import get_settings
+
+    settings = get_settings()
+    if not settings.jenkins_url or not settings.jenkins_token:
+        return {"ok": False, "detail": "Jenkins not configured."}
+
+    try:
+        import jenkins as jenkins_lib
+        server = jenkins_lib.Jenkins(
+            settings.jenkins_url,
+            username=settings.jenkins_user,
+            password=settings.jenkins_token,
+        )
+        config_xml = server.get_job_config(job_name)
+    except Exception as e:
+        return {"ok": False, "detail": f"Could not fetch job config: {e}"}
+
+    try:
+        tree = ET.fromstring(config_xml)
+        script_el = tree.find('.//script')
+        if script_el is None:
+            return {"ok": False, "detail": "Job has no pipeline script (not a Pipeline job?)."}
+
+        script = html_mod.unescape(script_el.text or "")
+
+        already_has_failure = 'webhook/pipeline-failure' in script
+        already_has_success = 'webhook/pipeline-success' in script
+
+        if already_has_failure and already_has_success:
+            return {"ok": True, "detail": "Already wired up — nothing to do.", "already": True}
+
+        failure_block = ""
+        success_block = ""
+
+        if not already_has_failure:
+            failure_block = """
+    failure {
+      sh \\"\\"\\"#!/bin/sh
+        cat > /tmp/wh_payload.json << 'JSONEOF'
+{\\"job_name\\":\\"${JOB_NAME}\\",\\"build_number\\":\\"${BUILD_NUMBER}\\",\\"failed_stage\\":\\"unknown\\",\\"status\\":\\"FAILURE\\",\\"stages\\":[],\\"log\\":\\"Build failed - check Jenkins console\\"}
+JSONEOF
+        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-failure \\\\
+          -H \\"Content-Type: application/json\\" \\\\
+          -H \\"X-Jenkins-Event: run.finalized\\" \\\\
+          --data @/tmp/wh_payload.json && echo WEBHOOK_OK || echo WEBHOOK_FAILED
+      \\"\\"\\"
+    }"""
+
+        if not already_has_success:
+            success_block = """
+    success {
+      sh \\"\\"\\"#!/bin/sh
+        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-success \\\\
+          -H \\"Content-Type: application/json\\" \\\\
+          -H \\"X-Jenkins-Event: run.finalized\\" \\\\
+          -d \\"{\\\\\\"job_name\\\\\\":\\\\\\"${JOB_NAME}\\\\\\",\\\\\\"build_number\\\\\\":\\\\\\"${BUILD_NUMBER}\\\\\\"}\\" \\\\
+          && echo WEBHOOK_OK || echo WEBHOOK_FAILED
+      \\"\\"\\"
+    }"""
+
+        # If there's already a post { } block, inject inside it; otherwise add one
+        if 'post {' in script:
+            # Append inside existing post block before its closing brace
+            script = script.rstrip()
+            # Find last } that closes the post block — insert before it
+            post_idx = script.rfind('post {')
+            close_idx = script.rfind('}')
+            script = script[:close_idx] + failure_block + success_block + '\n  }' + script[close_idx+1:]
+        else:
+            post_block = '\n\n  post {' + failure_block + success_block + '\n  }'
+            script = script.rstrip().rstrip('}').rstrip() + post_block + '\n}'
+
+        script_el.text = script
+        new_config = ET.tostring(tree, encoding='unicode', xml_declaration=False)
+        new_config = "<?xml version='1.1' encoding='UTF-8'?>\n" + new_config
+        server.reconfig_job(job_name, new_config)
+        return {"ok": True, "detail": "Webhook blocks injected successfully."}
+
+    except Exception as e:
+        return {"ok": False, "detail": f"Failed to inject: {e}"}
+
+
 # ── Commit pipeline file ───────────────────────────────────────────────────
 
 class CommitPayload(BaseModel):

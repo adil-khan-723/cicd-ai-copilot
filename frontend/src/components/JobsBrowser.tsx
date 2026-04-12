@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { RefreshCw, Play, Loader2, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react'
+import { RefreshCw, Play, Loader2, CheckCircle2, XCircle, AlertCircle, Clock, Plug, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JenkinsJob } from '@/types'
@@ -30,6 +30,8 @@ export function JobsBrowser({ onJenkinsStatus }: JobsBrowserProps) {
   const [jobs,      setJobs]      = useState<JenkinsJob[]>([])
   const [loading,   setLoading]   = useState(false)
   const [triggering,setTriggering]= useState<string | null>(null)
+  const [wiring,    setWiring]    = useState<string | null>(null)
+  const [wireStatus,setWireStatus]= useState<Record<string, 'ok' | 'already' | 'err'>>({})
   const [error,     setError]     = useState('')
 
   async function loadJobs() {
@@ -57,6 +59,23 @@ export function JobsBrowser({ onJenkinsStatus }: JobsBrowserProps) {
     } finally {
       setTriggering(null)
       setTimeout(loadJobs, 2000)
+    }
+  }
+
+  async function wireJob(name: string) {
+    setWiring(name)
+    try {
+      const res  = await fetch('/api/inject-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_name: name }),
+      })
+      const data = await res.json()
+      setWireStatus(prev => ({ ...prev, [name]: data.ok ? (data.already ? 'already' : 'ok') : 'err' }))
+    } catch {
+      setWireStatus(prev => ({ ...prev, [name]: 'err' }))
+    } finally {
+      setWiring(null)
     }
   }
 
@@ -111,6 +130,32 @@ export function JobsBrowser({ onJenkinsStatus }: JobsBrowserProps) {
 
                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                   <StatusIcon status={job.status} />
+
+                  {/* Wire-up button */}
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => wireJob(job.name)}
+                    disabled={wiring === job.name || wireStatus[job.name] === 'ok' || wireStatus[job.name] === 'already'}
+                    title={
+                      wireStatus[job.name] === 'ok'      ? 'Webhook injected' :
+                      wireStatus[job.name] === 'already'  ? 'Already wired up' :
+                      wireStatus[job.name] === 'err'      ? 'Injection failed — retry' :
+                      'Inject webhook notifications'
+                    }
+                    className={cn(
+                      wireStatus[job.name] === 'ok'     && 'text-success',
+                      wireStatus[job.name] === 'already' && 'text-success opacity-50',
+                      wireStatus[job.name] === 'err'     && 'text-error',
+                    )}
+                  >
+                    {wiring === job.name
+                      ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+                      : wireStatus[job.name] === 'ok' || wireStatus[job.name] === 'already'
+                        ? <Zap className="h-3 w-3" strokeWidth={2} />
+                        : <Plug className="h-3 w-3" strokeWidth={2} />}
+                  </Button>
+
                   <Button
                     variant="ghost"
                     size="icon-sm"
