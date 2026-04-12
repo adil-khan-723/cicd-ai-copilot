@@ -26,6 +26,39 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/webhook/pipeline-success")
+async def pipeline_success(request: Request):
+    """
+    Receives pipeline success events. Looks up the most recent failure analysis
+    for this job from EventBus history and emits a build_success SSE event so
+    the UI can show a success card and prompt to discard old failure cards.
+    """
+    from ui.event_bus import bus
+
+    payload = await request.json()
+    job  = payload.get("job_name", "unknown")
+    build = payload.get("build_number", "0")
+
+    # Find the most recent analysis_complete for this job in history
+    previous_failed_build = None
+    previous_root_cause   = None
+    for event in reversed(list(bus._history)):
+        if event.get("type") == "analysis_complete" and event.get("job") == job:
+            previous_failed_build = event.get("build")
+            previous_root_cause   = event.get("root_cause")
+            break
+
+    bus.publish({
+        "type": "build_success",
+        "job":  job,
+        "build": build,
+        "previous_failed_build": previous_failed_build,
+        "previous_root_cause":   previous_root_cause,
+    })
+    logger.info("Pipeline success: %s #%s", job, build)
+    return {"status": "received"}
+
+
 @app.post("/webhook/pipeline-failure")
 async def pipeline_failure(request: Request, background_tasks: BackgroundTasks):
     """

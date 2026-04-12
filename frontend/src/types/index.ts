@@ -38,7 +38,15 @@ export interface FixResultEvent {
   detail: string
 }
 
-export type SSEEvent = StepEvent | AnalysisCompleteEvent | FixResultEvent
+export interface BuildSuccessEvent {
+  type: 'build_success'
+  job: string
+  build: string | number
+  previous_failed_build?: string | number
+  previous_root_cause?: string
+}
+
+export type SSEEvent = StepEvent | AnalysisCompleteEvent | FixResultEvent | BuildSuccessEvent
 
 export interface BuildCard {
   key: string
@@ -49,6 +57,8 @@ export interface BuildCard {
   fixResult?: FixResultEvent
   dismissed: boolean
   createdAt: number
+  // Set when this card represents a successful build that resolved a prior failure
+  successEvent?: BuildSuccessEvent
 }
 
 export interface JenkinsJob {
