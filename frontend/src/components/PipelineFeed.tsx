@@ -19,33 +19,36 @@ export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardOldFailed 
   // Never show dismissed cards
   const visible = cards.filter(c => !c.dismissed)
 
-  // Sorted newest-first
-  const sorted = [...visible].sort((a, b) => b.createdAt - a.createdAt)
-
-  // All unique jobs in order of most recent activity
-  const jobs = Array.from(new Set(sorted.map(c => c.job)))
-
-  // Cards to render after job filter
-  const filtered = activeJob === 'all' ? sorted : sorted.filter(c => c.job === activeJob)
-
   // Jobs that have a success card AND still have old failed cards (for discard banner)
   const jobsNeedingDiscard = new Set(
     visible
       .filter(c => c.successEvent)
       .map(c => c.job)
-      .filter(job => visible.some(c => c.job === job && !c.successEvent && !c.dismissed))
+      .filter(job => visible.some(c => c.job === job && !c.successEvent))
   )
 
-  // Group filtered cards by job for rendering
-  const groups: { job: string; cards: BuildCardType[] }[] = []
-  for (const card of filtered) {
-    const last = groups[groups.length - 1]
-    if (last && last.job === card.job) {
-      last.cards.push(card)
-    } else {
-      groups.push({ job: card.job, cards: [card] })
-    }
+  // Pre-group all visible cards by job — newest build first within each group
+  const jobMap = new Map<string, BuildCardType[]>()
+  for (const card of visible) {
+    if (!jobMap.has(card.job)) jobMap.set(card.job, [])
+    jobMap.get(card.job)!.push(card)
   }
+  // Sort builds within each group newest-first
+  for (const builds of jobMap.values()) {
+    builds.sort((a, b) => b.createdAt - a.createdAt)
+  }
+  // Sort groups themselves by most recent build across each job
+  const allGroups = Array.from(jobMap.entries())
+    .map(([job, builds]) => ({ job, cards: builds, latest: builds[0].createdAt }))
+    .sort((a, b) => b.latest - a.latest)
+
+  // All unique jobs in order of most recent activity
+  const jobs = allGroups.map(g => g.job)
+
+  // Apply job filter
+  const groups = activeJob === 'all'
+    ? allGroups
+    : allGroups.filter(g => g.job === activeJob)
 
   if (visible.length === 0) {
     return (

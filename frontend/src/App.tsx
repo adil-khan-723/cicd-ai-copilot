@@ -28,6 +28,9 @@ export default function App() {
   // ── Jobs wire-up state lifted so it survives panel switches ───────────────
   const [wireStatus, setWireStatus] = useState<Record<string, 'ok' | 'already' | 'err'>>({})
 
+  // ── Known Jenkins job names — used to filter phantom cards ────────────────
+  const [knownJobs, setKnownJobs] = useState<Set<string>>(new Set())
+
   function handleWireStatus(name: string, status: 'ok' | 'already' | 'err') {
     setWireStatus(prev => ({ ...prev, [name]: status }))
   }
@@ -54,6 +57,15 @@ export default function App() {
         }
       })
       .finally(() => setBootDone(true))
+
+    // Fetch real job names from Jenkins to filter phantom cards
+    fetch('/api/jobs')
+      .then(r => r.json())
+      .then(data => {
+        const list: { name: string }[] = Array.isArray(data) ? data : (data.jobs ?? [])
+        if (list.length > 0) setKnownJobs(new Set(list.map(j => j.name)))
+      })
+      .catch(() => { /* Jenkins not configured yet — show all cards */ })
   }, [])
 
   // SSE event handler
@@ -146,7 +158,11 @@ export default function App() {
     setJenkinsStatus('connected')
   }
 
-  const cardList = Array.from(cards.values()).sort((a, b) => b.createdAt - a.createdAt)
+  const allCards = Array.from(cards.values()).sort((a, b) => b.createdAt - a.createdAt)
+  // If Jenkins job list is loaded, hide cards for jobs not in Jenkins
+  const cardList = knownJobs.size > 0
+    ? allCards.filter(c => knownJobs.has(c.job))
+    : allCards
 
   if (!bootDone) return null
 
