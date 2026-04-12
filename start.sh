@@ -53,7 +53,10 @@ echo ""
 
 # ── Jenkins setup (runs standalone, skips server checks) ─────
 if [[ "$SETUP_JENKINS" == "true" ]]; then
-  [[ ! -f ".env" ]] && [[ -f ".env.example" ]] && cp .env.example .env
+  if [[ ! -f ".env" ]]; then
+    [[ -f ".env.example" ]] && cp .env.example .env
+    die "No .env found. Copy .env.example to .env and fill in JENKINS_URL, JENKINS_USER, JENKINS_TOKEN."
+  fi
 
   info "Setting up Jenkins integration..."
 
@@ -62,7 +65,7 @@ if [[ "$SETUP_JENKINS" == "true" ]]; then
   JENKINS_TOKEN=$(grep -E '^JENKINS_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
 
   if [[ -z "$JENKINS_URL" || -z "$JENKINS_USER" || -z "$JENKINS_TOKEN" ]]; then
-    die "JENKINS_URL, JENKINS_USER, and JENKINS_TOKEN must be set in .env before running --setup-jenkins"
+    die "JENKINS_URL, JENKINS_USER, and JENKINS_TOKEN must all be set in .env"
   fi
 
   JENKINS_URL="${JENKINS_URL%/}"
