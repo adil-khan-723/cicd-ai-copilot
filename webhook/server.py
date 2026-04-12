@@ -26,6 +26,186 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/webhook/jenkins-notification")
+async def jenkins_notification(request: Request, background_tasks: BackgroundTasks):
+    """
+    Receives build notifications from the Jenkins Notification Plugin.
+    Fires for ALL jobs automatically — no post blocks needed in Jenkinsfiles.
+
+    Payload format:
+      {"name":"job","url":"...","build":{"number":1,"phase":"FINALIZED","status":"FAILURE","full_url":"..."}}
+
+    Only acts on FINALIZED phase (not STARTED/COMPLETED) to avoid duplicates.
+    Fetches the console log from Jenkins API and runs the full analysis pipeline.
+    """
+    payload = await request.json()
+
+    phase  = payload.get("build", {}).get("phase", "").upper()
+    status = payload.get("build", {}).get("status", "").upper()
+    job    = payload.get("name", "unknown")
+    build  = str(payload.get("build", {}).get("number", "0"))
+
+    logger.info("Notification plugin: job=%s build=%s phase=%s status=%s", job, build, phase, status)
+
+    # Only act on FINALIZED — plugin also sends STARTED and COMPLETED
+    if phase != "FINALIZED":
+        return {"status": "ignored", "reason": f"phase={phase}"}
+
+    if status == "FAILURE" or status == "ABORTED" or status == "UNSTABLE":
+        background_tasks.add_task(_process_notification_failure, job, build, payload)
+    elif status == "SUCCESS":
+        background_tasks.add_task(_process_notification_success, job, build)
+
+    return {"status": "received", "job": job, "build": build, "status_code": status}
+
+
+async def _process_notification_failure(job: str, build: str, payload: dict) -> None:
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _process_notification_failure_sync, job, build, payload)
+
+
+def _process_notification_failure_sync(job: str, build: str, payload: dict) -> None:
+    """Fetch console log from Jenkins and run the full analysis pipeline."""
+    from ui.event_bus import bus
+    from config import get_settings
+
+    settings = get_settings()
+
+    try:
+        # Fetch console log from Jenkins API
+        console_log = ""
+        if settings.jenkins_url and settings.jenkins_token:
+            try:
+                import jenkins as jenkins_lib
+                server = jenkins_lib.Jenkins(
+                    settings.jenkins_url,
+                    username=settings.jenkins_user,
+                    password=settings.jenkins_token,
+                )
+                console_log = server.get_build_console_output(job, int(build))
+                logger.info("[notification] Fetched console log: %d chars for %s #%s", len(console_log), job, build)
+            except Exception as e:
+                logger.warning("[notification] Could not fetch console log: %s", e)
+
+        # Build a synthetic webhook payload and run the existing pipeline
+        synthetic_payload = {
+            "job_name":     job,
+            "build_number": build,
+            "failed_stage": _detect_failed_stage(console_log),
+            "status":       "FAILURE",
+            "stages":       _detect_stages(console_log),
+            "log":          console_log[-8000:] if console_log else "No log available",
+        }
+
+        # Reuse the existing sync pipeline
+        _process_failure_sync(synthetic_payload, "jenkins")
+
+    except Exception as e:
+        logger.exception("[notification] Error processing failure for %s #%s: %s", job, build, e)
+        from ui.event_bus import bus
+        bus.publish({
+            "type": "step", "job": job, "build": build,
+            "stage": "PIPELINE_ERROR", "detail": str(e), "status": "failed",
+        })
+
+
+async def _process_notification_success(job: str, build: str) -> None:
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _process_notification_success_sync, job, build)
+
+
+def _process_notification_success_sync(job: str, build: str) -> None:
+    from ui.event_bus import bus
+
+    previous_failed_build = None
+    previous_root_cause   = None
+    for event in reversed(list(bus._history)):
+        if event.get("type") == "analysis_complete" and event.get("job") == job:
+            previous_failed_build = event.get("build")
+            previous_root_cause   = event.get("root_cause")
+            break
+
+    bus.publish({
+        "type":                  "build_success",
+        "job":                   job,
+        "build":                 build,
+        "previous_failed_build": previous_failed_build,
+        "previous_root_cause":   previous_root_cause,
+    })
+    logger.info("[notification] Success published: %s #%s", job, build)
+
+
+def _detect_failed_stage(console_log: str) -> str:
+    """
+    Try to extract which stage failed from the console log.
+    Looks for '[Pipeline] { (StageName)' lines followed by error indicators.
+    Falls back to 'unknown'.
+    """
+    if not console_log:
+        return "unknown"
+
+    import re
+    # Find all stage names and their positions
+    stage_pattern = re.compile(r'\[Pipeline\] \{ \((.+?)\)')
+    error_pattern = re.compile(r'(?:ERROR:|FAILED|error:|Build step.*failed|exit code \d+[^0])', re.IGNORECASE)
+
+    stages = list(stage_pattern.finditer(console_log))
+    if not stages:
+        return "unknown"
+
+    # Find position of first error
+    error_match = error_pattern.search(console_log)
+    if not error_match:
+        return stages[-1].group(1) if stages else "unknown"
+
+    error_pos = error_match.start()
+
+    # The failed stage is the last stage that started before the error
+    failed_stage = "unknown"
+    for match in stages:
+        if match.start() < error_pos:
+            name = match.group(1)
+            # Skip internal Jenkins stages
+            if name not in ("Declarative: Post Actions", "Declarative: Checkout SCM"):
+                failed_stage = name
+        else:
+            break
+
+    return failed_stage
+
+
+def _detect_stages(console_log: str) -> list:
+    """
+    Parse stage names and statuses from the console log.
+    Returns list of {"name": str, "status": "passed"|"failed"|"skipped"}.
+    """
+    if not console_log:
+        return []
+
+    import re
+    stage_starts = re.findall(r'\[Pipeline\] \{ \((.+?)\)', console_log)
+    # Filter internal stages
+    internal = {"Declarative: Post Actions", "Declarative: Checkout SCM", "Post Actions"}
+    stages = [s for s in stage_starts if s not in internal]
+
+    if not stages:
+        return []
+
+    failed_stage = _detect_failed_stage(console_log)
+    result = []
+    failed_seen = False
+    for name in stages:
+        if name == failed_stage:
+            result.append({"name": name, "status": "failed"})
+            failed_seen = True
+        elif failed_seen:
+            result.append({"name": name, "status": "skipped"})
+        else:
+            result.append({"name": name, "status": "passed"})
+
+    return result
+
+
 @app.post("/webhook/pipeline-success")
 async def pipeline_success(request: Request):
     """

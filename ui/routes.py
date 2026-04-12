@@ -188,18 +188,34 @@ async def inject_webhook(payload: InjectWebhookPayload):
 
 def _inject_webhook_blocks(job_name: str) -> dict:
     """
-    Reads the job's Groovy script from Jenkins, strips any existing post block,
-    then appends a clean post { failure + success } block with webhook calls.
-    Uses single-quoted Groovy strings to avoid all escaping issues.
+    Adds the Jenkins Notification Plugin property to a job so it sends
+    build events to /webhook/jenkins-notification on every build finish.
+    No post blocks in Jenkinsfiles needed.
     """
-    import html as html_mod
     import xml.etree.ElementTree as ET
-    import re
     from config import get_settings
 
     settings = get_settings()
     if not settings.jenkins_url or not settings.jenkins_token:
         return {"ok": False, "detail": "Jenkins not configured."}
+
+    NOTIFICATION_URL = "http://host.docker.internal:8000/webhook/jenkins-notification"
+    NOTIFICATION_XML = f"""<com.tikal.hudson.plugins.notification.HudsonNotificationProperty plugin="notification">
+      <endpoints>
+        <com.tikal.hudson.plugins.notification.Endpoint>
+          <protocol>HTTP</protocol>
+          <format>JSON</format>
+          <urlInfo>
+            <urlOrId>{NOTIFICATION_URL}</urlOrId>
+            <urlType>PUBLIC</urlType>
+          </urlInfo>
+          <event>finalized</event>
+          <timeout>30000</timeout>
+          <loglines>0</loglines>
+          <retries>3</retries>
+        </com.tikal.hudson.plugins.notification.Endpoint>
+      </endpoints>
+    </com.tikal.hudson.plugins.notification.HudsonNotificationProperty>"""
 
     try:
         import jenkins as jenkins_lib
@@ -214,68 +230,29 @@ def _inject_webhook_blocks(job_name: str) -> dict:
 
     try:
         tree = ET.fromstring(config_xml)
-        script_el = tree.find('.//script')
-        if script_el is None:
-            return {"ok": False, "detail": "Job has no pipeline script (not a Pipeline job?)."}
 
-        script = html_mod.unescape(script_el.text or "")
+        # Already wired?
+        existing = tree.find('.//com.tikal.hudson.plugins.notification.HudsonNotificationProperty')
+        if existing is not None:
+            url_el = existing.find('.//urlOrId')
+            if url_el is not None and NOTIFICATION_URL in (url_el.text or ""):
+                return {"ok": True, "detail": "Already wired up — nothing to do.", "already": True}
+            # Stale/wrong URL — remove and replace
+            props = tree.find('properties')
+            if props is not None:
+                props.remove(existing)
 
-        if 'webhook/pipeline-failure' in script and 'webhook/pipeline-success' in script:
-            return {"ok": True, "detail": "Already wired up — nothing to do.", "already": True}
+        props = tree.find('properties')
+        if props is None:
+            props = ET.SubElement(tree, 'properties')
+        props.append(ET.fromstring(NOTIFICATION_XML))
 
-        # Strip any existing post block entirely so we can replace with a clean one
-        # Match 'post {' ... balanced closing '}' at the same indent level
-        script_no_post = re.sub(
-            r'\n?\s*post\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',
-            '',
-            script,
-            flags=re.DOTALL,
-        ).rstrip()
-
-        # Remove the pipeline's outer closing brace so we can append inside
-        if script_no_post.endswith('}'):
-            pipeline_body = script_no_post[:-1].rstrip()
-        else:
-            pipeline_body = script_no_post
-
-        # ElementTree sets script_el.text and handles XML escaping automatically.
-        # This is plain Groovy — no manual escaping needed at the Python level.
-        # Using sh with a heredoc (proven to work in backend-api Jenkinsfile).
-        post_block = '''
-  post {
-    failure {
-      sh """#!/bin/sh
-        cat > /tmp/wh_payload.json << 'JSONEOF'
-{"job_name":"${JOB_NAME}","build_number":"${BUILD_NUMBER}","failed_stage":"unknown","status":"FAILURE","stages":[],"log":"Build failed - check Jenkins console"}
-JSONEOF
-        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-failure \\
-          -H "Content-Type: application/json" \\
-          -H "X-Jenkins-Event: run.finalized" \\
-          --data @/tmp/wh_payload.json && echo WEBHOOK_OK || echo WEBHOOK_FAILED
-      """
-    }
-    success {
-      sh """#!/bin/sh
-        curl -sf -X POST http://host.docker.internal:8000/webhook/pipeline-success \\
-          -H "Content-Type: application/json" \\
-          -H "X-Jenkins-Event: run.finalized" \\
-          -d "{\\"job_name\\":\\"${JOB_NAME}\\",\\"build_number\\":\\"${BUILD_NUMBER}\\"}" \\
-          && echo WEBHOOK_OK || echo WEBHOOK_FAILED
-      """
-    }
-  }
-}'''
-
-        new_script = pipeline_body + post_block
-
-        script_el.text = new_script
         new_config = ET.tostring(tree, encoding='unicode', xml_declaration=False)
-        new_config = "<?xml version='1.1' encoding='UTF-8'?>\n" + new_config
-        server.reconfig_job(job_name, new_config)
-        return {"ok": True, "detail": "Webhook blocks injected successfully."}
+        server.reconfig_job(job_name, "<?xml version='1.1' encoding='UTF-8'?>\n" + new_config)
+        return {"ok": True, "detail": "Notification plugin wired up successfully."}
 
     except Exception as e:
-        return {"ok": False, "detail": f"Failed to inject: {e}"}
+        return {"ok": False, "detail": f"Failed to wire up: {e}"}
 
 
 # ── Commit pipeline file ───────────────────────────────────────────────────
