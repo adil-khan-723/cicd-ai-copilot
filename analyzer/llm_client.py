@@ -6,11 +6,21 @@ Orchestrates: cache check → build prompt → call provider → parse response 
 import logging
 
 from providers import get_provider
+from providers.factory import ProviderUnavailableError
 from analyzer import cache as analysis_cache
 from analyzer.prompt_builder import build_system_prompt, build_user_prompt
 from analyzer.response_parser import parse_analysis_response
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER_UNAVAILABLE = {
+    "root_cause": "No LLM provider is available.",
+    "fix_suggestion": (
+        "Start Ollama (`ollama serve`) or set ANTHROPIC_API_KEY / GROQ_API_KEY in .env."
+    ),
+    "confidence": 0.0,
+    "fix_type": "diagnostic_only",
+}
 
 
 def analyze(context: str) -> dict:
@@ -28,7 +38,11 @@ def analyze(context: str) -> dict:
     if cached is not None:
         return cached
 
-    provider = get_provider("analysis")
+    try:
+        provider = get_provider("analysis")
+    except ProviderUnavailableError as e:
+        logger.error("All LLM providers unavailable: %s", e)
+        return dict(_PROVIDER_UNAVAILABLE)
 
     system = build_system_prompt()
     user = build_user_prompt(context)
@@ -38,8 +52,8 @@ def analyze(context: str) -> dict:
     except Exception as e:
         logger.error("LLM provider '%s' failed: %s", provider.name, e)
         return {
-            "root_cause": f"LLM provider unavailable: {provider.name}",
-            "fix_suggestion": "Manual review required.",
+            "root_cause": f"LLM provider error ({provider.name}): {e}",
+            "fix_suggestion": "Check provider config or switch LLM_PROVIDER in .env.",
             "confidence": 0.0,
             "fix_type": "diagnostic_only",
         }

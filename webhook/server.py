@@ -122,17 +122,22 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "stage": "CONTEXT_BUILT", "detail": "sending to LLM...", "status": "running",
         })
         context_str = build_context(cleaned, report, ctx)
-        analysis = analyze(context_str)
+        analysis = analyze(context_str)  # always returns a dict — never raises
         logger.info(
             "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s",
             analysis.get("root_cause", "")[:60],
             analysis.get("confidence", 0),
             analysis.get("fix_type"),
         )
-        # Mark context step as done now that the LLM has returned
+
+        # Determine step status: if no LLM was available, mark as failed so UI shows it clearly
+        llm_ok = analysis.get("confidence", 0) > 0 or analysis.get("fix_type") != "diagnostic_only"
+        context_status = "done" if llm_ok else "failed"
+        llm_status = "done" if llm_ok else "failed"
+
         bus.publish({
             "type": "step", "job": ctx.job_name, "build": ctx.build_number,
-            "stage": "CONTEXT_BUILT", "detail": "context built", "status": "done",
+            "stage": "CONTEXT_BUILT", "detail": "context built", "status": context_status,
         })
         bus.publish({
             "type": "step", "job": ctx.job_name, "build": ctx.build_number,
@@ -140,10 +145,10 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "detail": analysis.get("root_cause", "")[:120],
             "fix_type": analysis.get("fix_type"),
             "confidence": analysis.get("confidence", 0),
-            "status": "done",
+            "status": llm_status,
         })
 
-        # Step 6: Emit full analysis event for the UI card
+        # Step 6: Always emit analysis_complete so the UI card renders
         bus.publish({
             "type": "analysis_complete",
             "job": ctx.job_name,
@@ -164,6 +169,19 @@ def _process_failure_sync(payload: dict, source: str) -> None:
 
     except Exception as e:
         logger.exception("[pipeline] Unhandled error in failure processing: %s", e)
+        # Best-effort: tell the UI something went wrong so it doesn't hang
+        try:
+            from ui.event_bus import bus
+            bus.publish({
+                "type": "step",
+                "job": payload.get("job_name", "unknown"),
+                "build": str(payload.get("build_number", "0")),
+                "stage": "PIPELINE_ERROR",
+                "detail": f"Internal error: {e}",
+                "status": "failed",
+            })
+        except Exception:
+            pass
 
 
 def _run_verification(ctx, payload: dict) -> "VerificationReport":
