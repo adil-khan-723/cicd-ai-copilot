@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash } from 'lucide-react'
+import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
@@ -8,6 +8,58 @@ import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType } from '@/types'
 
 const CONFIDENCE_THRESHOLD = 0.75
+
+export function SuccessBuildCard({ card, onDiscard }: { card: BuildCardType; onDiscard: () => void }) {
+  const { successEvent } = card
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+      className="relative rounded-xl border border-success/20 overflow-hidden bg-card shadow-card"
+    >
+      <div className="h-px w-full bg-gradient-to-r from-success/60 via-success/20 to-transparent" />
+      <div className="flex items-center gap-2.5 px-4 py-3">
+        <CheckCircle2 className="h-4 w-4 text-success shrink-0" strokeWidth={2} />
+        <span className="text-sm font-semibold text-text-primary font-mono truncate flex-1">
+          {card.job}
+        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Badge variant="muted">
+            <Hash className="h-2.5 w-2.5" />{card.build}
+          </Badge>
+          <Badge variant="success">passed</Badge>
+        </div>
+        <Button
+          variant="success"
+          size="sm"
+          onClick={onDiscard}
+          className="ml-2 text-xs h-6 px-2.5"
+        >
+          Discard
+        </Button>
+      </div>
+      {successEvent?.previous_root_cause && (
+        <div className="px-4 pb-3.5">
+          <div className="rounded-lg border border-success/10 bg-success-dim px-3 py-2.5 space-y-1">
+            <p className="text-[10px] font-mono font-semibold text-success/70 uppercase tracking-widest">
+              Previous failure resolved
+              {successEvent.previous_failed_build && (
+                <span className="ml-1 text-text-dim normal-case">
+                  (build #{successEvent.previous_failed_build})
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-text-muted leading-relaxed">
+              {successEvent.previous_root_cause}
+            </p>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  )
+}
 
 const DIAGNOSTIC_TYPES = new Set([
   'diagnostic_only', 'tool_mismatch', 'missing_plugin', 'missing_credential',

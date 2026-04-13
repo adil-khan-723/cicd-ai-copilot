@@ -57,6 +57,7 @@ export interface BuildCard {
   fixResult?: FixResultEvent
   dismissed: boolean
   createdAt: number
+  successEvent?: BuildSuccessEvent
 }
 
 export interface JenkinsJob {

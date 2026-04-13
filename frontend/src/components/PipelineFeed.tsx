@@ -1,33 +1,39 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Activity, Terminal, Trash2 } from 'lucide-react'
-import { BuildCard } from './BuildCard'
+import { BuildCard, SuccessBuildCard } from './BuildCard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType } from '@/types'
 
 interface PipelineFeedProps {
-  cards:      BuildCardType[]
-  onDismiss:  (k: string) => void
-  onClearAll: () => void
+  cards:          BuildCardType[]
+  onDismiss:      (k: string) => void
+  onClearAll:     () => void
+  onDiscardJob:   (job: string) => void
 }
 
-export function PipelineFeed({ cards, onDismiss, onClearAll }: PipelineFeedProps) {
+export function PipelineFeed({ cards, onDismiss, onClearAll, onDiscardJob }: PipelineFeedProps) {
   const [activeJob, setActiveJob] = useState<string>('all')
 
   // Never show dismissed cards
   const visible = cards.filter(c => !c.dismissed)
 
-  // Pre-group by job — newest build first within each group
+  // Pre-group by job — success card always first, then failures newest-first
   const jobMap = new Map<string, BuildCardType[]>()
   for (const card of visible) {
     if (!jobMap.has(card.job)) jobMap.set(card.job, [])
     jobMap.get(card.job)!.push(card)
   }
   for (const builds of jobMap.values()) {
-    builds.sort((a, b) => b.createdAt - a.createdAt)
+    builds.sort((a, b) => {
+      if (a.successEvent && !b.successEvent) return -1
+      if (!a.successEvent && b.successEvent) return  1
+      return b.createdAt - a.createdAt
+    })
   }
-  // Sort groups by most recent build
+
+  // Sort groups by most recent activity
   const allGroups = Array.from(jobMap.entries())
     .map(([job, builds]) => ({ job, cards: builds, latest: builds[0].createdAt }))
     .sort((a, b) => b.latest - a.latest)
@@ -90,6 +96,7 @@ export function PipelineFeed({ cards, onDismiss, onClearAll }: PipelineFeedProps
             label={job}
             count={visible.filter(c => c.job === job).length}
             active={activeJob === job}
+            passed={visible.some(c => c.job === job && c.successEvent)}
             onClick={() => setActiveJob(activeJob === job ? 'all' : job)}
           />
         ))}
@@ -121,12 +128,18 @@ export function PipelineFeed({ cards, onDismiss, onClearAll }: PipelineFeedProps
                   </div>
                 )}
 
-                {/* Build cards */}
+                {/* Build cards — success card renders with Discard button */}
                 <div className="flex flex-col gap-2">
                   <AnimatePresence initial={false}>
-                    {group.cards.map(card => (
-                      <BuildCard key={card.key} card={card} onDismiss={onDismiss} />
-                    ))}
+                    {group.cards.map(card =>
+                      card.successEvent
+                        ? <SuccessBuildCard
+                            key={card.key}
+                            card={card}
+                            onDiscard={() => onDiscardJob(card.job)}
+                          />
+                        : <BuildCard key={card.key} card={card} onDismiss={onDismiss} />
+                    )}
                   </AnimatePresence>
                 </div>
               </motion.div>
@@ -138,14 +151,17 @@ export function PipelineFeed({ cards, onDismiss, onClearAll }: PipelineFeedProps
   )
 }
 
+// ── Job tab pill ───────────────────────────────────────────────────────────────
+
 interface JobTabProps {
   label:   string
   count:   number
   active:  boolean
+  passed?: boolean
   onClick: () => void
 }
 
-function JobTab({ label, count, active, onClick }: JobTabProps) {
+function JobTab({ label, count, active, passed, onClick }: JobTabProps) {
   return (
     <button
       onClick={onClick}
@@ -157,6 +173,12 @@ function JobTab({ label, count, active, onClick }: JobTabProps) {
           : 'border-glass bg-surface/40 text-text-dim hover:text-text-muted hover:border-glass/80',
       )}
     >
+      {label !== 'All' && (
+        <span className={cn(
+          'h-1.5 w-1.5 rounded-full shrink-0',
+          passed ? 'bg-success' : 'bg-error',
+        )} />
+      )}
       <span>{label}</span>
       <span className={cn(
         'ml-0.5 rounded-full px-1.5 py-0.5 text-[10px] leading-none',
