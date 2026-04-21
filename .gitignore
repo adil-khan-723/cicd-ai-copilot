@@ -43,6 +43,7 @@ audit.log
 
 # Node (if any)
 node_modules/
+frontend/dist/
 
 # Ollama models (stored on external SSD, not in repo)
 *.gguf

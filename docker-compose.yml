@@ -1,6 +1,11 @@
 # Docker Compose — DevOps AI Agent
-# Usage: docker-compose up
-# For local dev with Ollama: ensure Ollama is running on the host first.
+#
+# Dev  (hot-reload, mounts source):  docker-compose up
+# Prod (built image, no mount):      docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# Prerequisites:
+#   cp .env.example .env  # fill in tokens
+#   docker-compose up
 
 services:
   webhook:
@@ -9,31 +14,20 @@ services:
       - "${WEBHOOK_PORT:-8000}:8000"
     env_file: .env
     environment:
-      # Allow container to reach host Ollama on macOS/Windows
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Override localhost URLs so containers reach the host machine (Mac/Windows)
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL_DOCKER:-http://host.docker.internal:11434}
+      JENKINS_URL: ${JENKINS_URL_DOCKER:-http://host.docker.internal:8080}
+      WEBHOOK_HOST: "0.0.0.0"
     command: uvicorn webhook.server:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - .:/app
+      - .:/app                      # live source mount for --reload
       - audit_logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
-      retries: 3
-    restart: unless-stopped
-
-  slack-bot:
-    build: .
-    env_file: .env
-    environment:
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-    command: python -m slack.bot
-    volumes:
-      - .:/app
-      - audit_logs:/app/logs
-    depends_on:
-      webhook:
-        condition: service_healthy
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   # Optional Redis cache — uncomment when REDIS_URL is set in .env

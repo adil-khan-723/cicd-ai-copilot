@@ -1,13 +1,11 @@
 """
 Phase 1 integration test — full flow without LLM:
-  Webhook payload → parse → extract logs → clean → Slack alert
+  Webhook payload → parse → extract logs → clean
 """
 import pytest
-from unittest.mock import patch, MagicMock
 from parser.pipeline_parser import parse_failure
 from parser.log_extractor import extract_failed_logs
 from parser.log_cleaner import clean_log
-from slack.notifier import send_failure_alert
 
 
 JENKINS_PAYLOAD = {
@@ -117,25 +115,3 @@ class TestLogCleaner:
         assert "[INFO]" not in cleaned
 
 
-class TestSlackNotifier:
-    def test_sends_alert(self):
-        ctx = parse_failure(JENKINS_PAYLOAD, source="jenkins")
-        extracted = extract_failed_logs(ctx)
-        cleaned = clean_log(extracted)
-
-        mock_response = MagicMock()
-        mock_response.__getitem__ = lambda self, key: "1234567890.123456" if key == "ts" else None
-
-        with patch("slack.notifier.get_slack_client") as mock_client_factory:
-            mock_client = MagicMock()
-            mock_client.chat_postMessage.return_value = mock_response
-            mock_client_factory.return_value = mock_client
-
-            ts = send_failure_alert(ctx, cleaned)
-
-            mock_client.chat_postMessage.assert_called_once()
-            call_kwargs = mock_client.chat_postMessage.call_args.kwargs
-            from config import get_settings
-            assert call_kwargs["channel"] == get_settings().slack_channel
-            assert "build-api" in call_kwargs["text"]
-            assert len(call_kwargs["blocks"]) > 0

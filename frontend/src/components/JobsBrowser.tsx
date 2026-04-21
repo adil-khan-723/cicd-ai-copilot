@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { RefreshCw, Play, Loader2, CheckCircle2, XCircle, AlertCircle, Clock, Plug, Zap } from 'lucide-react'
+import { RefreshCw, Play, Loader2, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JenkinsJob } from '@/types'
@@ -11,29 +11,43 @@ interface JobsBrowserProps {
   onWireStatus?:    (name: string, status: 'ok' | 'already' | 'err') => void
 }
 
-function StatusDot({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    success:    'bg-success shadow-[0_0_6px_rgba(34,197,94,0.5)]',
-    failure:    'bg-error shadow-[0_0_6px_rgba(239,68,68,0.5)]',
-    running:    'bg-accent dot-pulse',
-    unknown:    'bg-text-dim',
-  }
-  return <span className={cn('inline-block h-2 w-2 rounded-full shrink-0', map[status] ?? map.unknown)} />
+const STATUS_CONFIG: Record<string, {
+  label: string
+  labelClass: string
+  icon: React.ReactNode
+  leftBorder: string
+}> = {
+  success: {
+    label:      'passed',
+    labelClass: 'text-success bg-success-dim border-success-border',
+    icon:       <CheckCircle2 className="h-[18px] w-[18px] text-success" strokeWidth={2} />,
+    leftBorder: 'hover:border-l-success',
+  },
+  failure: {
+    label:      'failed',
+    labelClass: 'text-error bg-error-dim border-error-border',
+    icon:       <XCircle className="h-[18px] w-[18px] text-error" strokeWidth={2} />,
+    leftBorder: 'hover:border-l-error',
+  },
+  running: {
+    label:      'running',
+    labelClass: 'text-running bg-running-dim border-running-border',
+    icon:       <Loader2 className="h-[18px] w-[18px] text-running animate-spin" strokeWidth={2} />,
+    leftBorder: 'hover:border-l-running',
+  },
+  unknown: {
+    label:      'unknown',
+    labelClass: 'text-text-muted bg-overlay/60 border-accent-border/40',
+    icon:       <AlertCircle className="h-[18px] w-[18px] text-text-dim" strokeWidth={1.5} />,
+    leftBorder: '',
+  },
 }
 
-function StatusIcon({ status }: { status: string }) {
-  if (status === 'success') return <CheckCircle2 className="h-3.5 w-3.5 text-success" strokeWidth={2} />
-  if (status === 'failure') return <XCircle      className="h-3.5 w-3.5 text-error"   strokeWidth={2} />
-  if (status === 'running') return <Loader2      className="h-3.5 w-3.5 text-accent animate-spin" strokeWidth={2} />
-  return <AlertCircle className="h-3.5 w-3.5 text-text-dim" strokeWidth={1.5} />
-}
-
-export function JobsBrowser({ onJenkinsStatus, wireStatus = {}, onWireStatus }: JobsBrowserProps) {
-  const [jobs,      setJobs]      = useState<JenkinsJob[]>([])
-  const [loading,   setLoading]   = useState(false)
-  const [triggering,setTriggering]= useState<string | null>(null)
-  const [wiring,    setWiring]    = useState<string | null>(null)
-  const [error,     setError]     = useState('')
+export function JobsBrowser({ onJenkinsStatus, wireStatus = {} }: JobsBrowserProps) {
+  const [jobs,       setJobs]       = useState<JenkinsJob[]>([])
+  const [loading,    setLoading]    = useState(false)
+  const [triggering, setTriggering] = useState<string | null>(null)
+  const [error,      setError]      = useState('')
 
   async function loadJobs() {
     setLoading(true); setError('')
@@ -63,114 +77,120 @@ export function JobsBrowser({ onJenkinsStatus, wireStatus = {}, onWireStatus }: 
     }
   }
 
-  async function wireJob(name: string) {
-    setWiring(name)
-    try {
-      const res  = await fetch('/api/inject-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_name: name }),
-      })
-      const data = await res.json()
-      onWireStatus?.(name, data.ok ? (data.already ? 'already' : 'ok') : 'err')
-    } catch {
-      onWireStatus?.(name, 'err')
-    } finally {
-      setWiring(null)
-    }
-  }
-
   useEffect(() => { loadJobs() }, [])
 
+  const passing = jobs.filter(j => j.status === 'success').length
+  const failing  = jobs.filter(j => j.status === 'failure').length
+  const running  = jobs.filter(j => j.status === 'running').length
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-glass shrink-0">
-        <span className="text-xs font-mono text-text-muted">
-          {loading ? 'Loading...' : `${jobs.length} job${jobs.length !== 1 ? 's' : ''}`}
-        </span>
-        <Button variant="ghost" size="icon-sm" onClick={loadJobs} disabled={loading} title="Refresh">
-          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} strokeWidth={1.5} />
-        </Button>
+    <div className="flex flex-col h-full bg-bg">
+      {/* Header */}
+      <div className="px-6 py-5 border-b border-accent-border/40 shrink-0 bg-surface">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-[16px] font-extrabold text-text-primary tracking-tight">Jenkins Jobs</h2>
+            <p className="text-[12px] font-mono text-text-muted mt-1">
+              {loading ? 'Refreshing...' : `${jobs.length} job${jobs.length !== 1 ? 's' : ''} configured`}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={loadJobs}
+            disabled={loading}
+            className="text-text-muted hover:text-text-primary border border-accent-border/40 rounded-lg h-8 w-8"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} strokeWidth={1.5} />
+          </Button>
+        </div>
+        {jobs.length > 0 && (
+          <div className="flex items-center gap-2">
+            {passing > 0 && (
+              <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-success-dim text-success border border-success-border">
+                {passing} passing
+              </span>
+            )}
+            {failing > 0 && (
+              <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-error-dim text-error border border-error-border">
+                {failing} failing
+              </span>
+            )}
+            {running > 0 && (
+              <span className="text-[11px] font-mono px-2.5 py-1 rounded-lg bg-running-dim text-running border border-running-border">
+                {running} running
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Job list */}
       <div className="flex-1 overflow-y-auto">
         {loading && jobs.length === 0 ? (
-          <div className="flex items-center justify-center h-40 gap-2 text-text-dim">
-            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
-            <span className="text-xs font-mono">Loading jobs...</span>
+          <div className="flex items-center justify-center h-48 gap-3 text-text-muted">
+            <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.5} />
+            <span className="text-[13px] font-mono">Loading jobs...</span>
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center h-40 gap-3 px-6 text-center">
-            <AlertCircle className="h-6 w-6 text-text-dim" strokeWidth={1.5} />
-            <p className="text-xs text-error/80">{error}</p>
+          <div className="flex flex-col items-center justify-center h-48 gap-4 px-8 text-center">
+            <AlertCircle className="h-8 w-8 text-text-dim" strokeWidth={1.5} />
+            <p className="text-[13px] text-error font-mono">{error}</p>
           </div>
         ) : jobs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 gap-2 text-text-dim">
-            <Clock className="h-6 w-6 opacity-30" strokeWidth={1.5} />
-            <p className="text-xs">No jobs found — is Jenkins configured?</p>
+          <div className="flex flex-col items-center justify-center h-48 gap-3 text-text-muted">
+            <Clock className="h-8 w-8 opacity-30" strokeWidth={1.5} />
+            <p className="text-[13px] font-mono">No jobs found — is Jenkins configured?</p>
           </div>
         ) : (
-          <div className="divide-y divide-glass">
-            {jobs.map((job, i) => (
-              <motion.div
-                key={job.name}
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.03, type: 'spring', stiffness: 400, damping: 35 }}
-                className="flex items-center gap-3 px-4 py-3 hover:bg-white/[0.025] transition-colors duration-150 group"
-              >
-                <StatusDot status={job.status} />
-
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-mono text-text-primary truncate block">
-                    {job.name}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                  <StatusIcon status={job.status} />
-
-                  {/* Wire-up button */}
+          <div className="divide-y divide-accent-border/25">
+            {jobs.map((job, i) => {
+              const cfg   = STATUS_CONFIG[job.status] ?? STATUS_CONFIG.unknown
+              const wired = wireStatus[job.name] === 'ok' || wireStatus[job.name] === 'already'
+              return (
+                <motion.div
+                  key={job.name}
+                  initial={{ opacity: 0, x: -6 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.025, type: 'spring', stiffness: 400, damping: 35 }}
+                  className={cn(
+                    'flex items-center gap-4 px-6 py-4 transition-all duration-150 group',
+                    'hover:bg-overlay/30',
+                    'border-l-[3px] border-l-transparent',
+                    cfg.leftBorder,
+                  )}
+                >
+                  <div className="shrink-0">{cfg.icon}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-[14px] font-mono text-text-base font-medium truncate">{job.name}</span>
+                      {wired && (
+                        <span className="text-[10px] font-mono text-accent bg-accent-dim border border-accent-border rounded-full px-2 py-0.5 shrink-0">
+                          wired
+                        </span>
+                      )}
+                    </div>
+                    <span className={cn(
+                      'inline-flex items-center text-[11px] font-mono mt-1 px-2 py-0.5 rounded-lg border',
+                      cfg.labelClass
+                    )}>
+                      {cfg.label}
+                    </span>
+                  </div>
                   <Button
                     variant="ghost"
-                    size="icon-sm"
-                    onClick={() => wireJob(job.name)}
-                    disabled={wiring === job.name || wireStatus[job.name] === 'ok' || wireStatus[job.name] === 'already'}
-                    title={
-                      wireStatus[job.name] === 'ok'      ? 'Webhook injected' :
-                      wireStatus[job.name] === 'already'  ? 'Already wired up' :
-                      wireStatus[job.name] === 'err'      ? 'Injection failed — retry' :
-                      'Inject webhook notifications'
-                    }
-                    className={cn(
-                      wireStatus[job.name] === 'ok'     && 'text-success',
-                      wireStatus[job.name] === 'already' && 'text-success opacity-50',
-                      wireStatus[job.name] === 'err'     && 'text-error',
-                    )}
-                  >
-                    {wiring === job.name
-                      ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
-                      : wireStatus[job.name] === 'ok' || wireStatus[job.name] === 'already'
-                        ? <Zap className="h-3 w-3" strokeWidth={2} />
-                        : <Plug className="h-3 w-3" strokeWidth={2} />}
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
+                    size="sm"
                     onClick={() => triggerJob(job.name)}
                     disabled={triggering === job.name}
-                    title={`Trigger ${job.name}`}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary border border-accent-border/40 rounded-lg h-8 px-3 font-mono text-[12px] gap-1.5"
                   >
                     {triggering === job.name
-                      ? <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
-                      : <Play    className="h-3 w-3" strokeWidth={2} />}
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Running...</>
+                      : <><Play    className="h-3.5 w-3.5" strokeWidth={2} /> Trigger</>}
                   </Button>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              )
+            })}
           </div>
         )}
       </div>

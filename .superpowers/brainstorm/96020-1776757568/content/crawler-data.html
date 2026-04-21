@@ -1,0 +1,35 @@
+<h2>Tool Crawler data — when does it run?</h2>
+<p class="subtitle">The crawler checks if Jenkins tools/credentials are properly configured. Currently it runs during failure analysis but results never reach the UI.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Attach results to existing analysis_complete event</h3>
+      <p>The crawler already runs during failure processing. Extend the <code>analysis_complete</code> SSE event to include <code>verification</code> data (tool mismatches, missing plugins, missing credentials). No new API call needed — data arrives with the analysis.</p>
+      <div style="margin-top:10px;display:flex;gap:8px;font-size:11px;flex-wrap:wrap;color:#666;">
+        <span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;color:#2e7d32">✓ Zero extra work — data already computed</span>
+        <span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;color:#2e7d32">✓ No new backend endpoint</span>
+        <span style="background:#fff3e0;padding:3px 8px;border-radius:4px;color:#e65100">⚠ Only runs when a build fails (not on demand)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>On-demand crawl when drawer opens</h3>
+      <p>When you open the drawer and click the Tool Crawler tab, the UI calls <code>GET /api/verify?job=X&build=N</code>. Backend fetches the Jenkinsfile for that job and runs the crawler fresh against live Jenkins.</p>
+      <div style="margin-top:10px;display:flex;gap:8px;font-size:11px;flex-wrap:wrap;color:#666;">
+        <span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;color:#2e7d32">✓ Always fresh — reflects current Jenkins state</span>
+        <span style="background:#e8f5e9;padding:3px 8px;border-radius:4px;color:#2e7d32">✓ Works for any job, not just failures</span>
+        <span style="background:#fff3e0;padding:3px 8px;border-radius:4px;color:#e65100">⚠ Needs Jenkinsfile accessible (job config fetch)</span>
+        <span style="background:#fff3e0;padding:3px 8px;border-radius:4px;color:#e65100">⚠ Extra 1-2s wait when tab opens</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:20px;padding:12px 16px;background:#f3f4f6;border-radius:8px;font-size:13px;color:#374151;">
+  <strong>My recommendation: Option A.</strong> The crawler already ran — results are sitting in memory unused. Attaching them to the SSE event is 10 lines of code. Option B is better long-term (works for any job) but adds complexity now. Can always upgrade to B later.
+</div>

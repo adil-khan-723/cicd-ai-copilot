@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 # fix_type → executor function
 _FIX_MAP = {
     "retry": retry_pipeline,
-    "clear_cache": clear_docker_cache,    # default to docker; npm variant via pipeline param
+    "clear_cache": clear_docker_cache,
+    "clear_npm_cache": clear_npm_cache,
     "pull_image": pull_fresh_image,
     "increase_timeout": increase_timeout,
 }

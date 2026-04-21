@@ -36,25 +36,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="")
     gemini_model: str = Field(default="gemini-1.5-flash")
 
-    # Slack
-    slack_bot_token: str = Field(default="")
-    slack_app_token: str = Field(default="")
-    slack_signing_secret: str = Field(default="")
-    slack_channel: str = Field(default="#devops-alerts")
-
-    # UI
-    slack_alerts: str = Field(default="enabled")   # "enabled" | "disabled"
-    github_repo: str = Field(default="")           # "owner/repo" active project
-
     # Jenkins
     jenkins_url: str = Field(default="http://localhost:8080")
     jenkins_user: str = Field(default="admin")
     jenkins_token: str = Field(default="")
-
-    # GitHub
-    github_token: str = Field(default="")
-    github_org: str = Field(default="")
-    github_default_repo: str = Field(default="")
 
     # Webhook
     webhook_port: int = Field(default=8000)
