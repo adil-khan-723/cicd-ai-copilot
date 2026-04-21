@@ -1,0 +1,51 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Frontend build artifacts (already compiled into ui/static)
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/
+
+# Dev/local files
+.env
+.env.local
+*.log
+logs/
+audit.log
+
+# Graph output (large, regenerated)
+graphify-out/
+
+# Git
+.git/
+.gitignore
+
+# Docs / plans (not needed at runtime)
+docs/
+decisions/
+archives/
+templates/
+simulation-test-output.txt
+BUILD_PLAN.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/

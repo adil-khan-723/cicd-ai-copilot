@@ -1,46 +1,54 @@
-import { GitBranch } from 'lucide-react'
+import { GitBranch, Circle } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { ActivePanel } from '@/types'
 
-const PANEL_LABELS: Record<ActivePanel, string> = {
-  pipeline: 'Pipeline Feed',
-  chat:     'Copilot Chat',
-  jobs:     'Jobs',
-  settings: 'Settings',
+const PANEL_META: Record<ActivePanel, { title: string; sub: string }> = {
+  pipeline: { title: 'Pipeline Feed',   sub: 'Live CI/CD event stream' },
+  chat:     { title: 'AI Copilot',      sub: 'Pipeline assistant & generator' },
+  jobs:     { title: 'Jenkins Jobs',    sub: 'Browse and trigger builds' },
+  settings: { title: 'Settings',        sub: 'Project configuration' },
 }
 
 interface TopbarProps {
-  activePanel:    ActivePanel
-  repoName:       string
-  jenkinsStatus:  'connected' | 'disconnected' | 'unknown'
+  activePanel:   ActivePanel
+  repoName:      string
+  jenkinsStatus: 'connected' | 'disconnected' | 'unknown'
 }
 
 export function Topbar({ activePanel, repoName, jenkinsStatus }: TopbarProps) {
-  return (
-    <header className="h-11 flex items-center justify-between px-4 border-b border-glass glass shrink-0">
-      <span className="text-sm font-medium text-text-primary tracking-tight">
-        {PANEL_LABELS[activePanel]}
-      </span>
+  const { title, sub } = PANEL_META[activePanel]
 
-      <div className="flex items-center gap-4">
+  return (
+    <header className="h-14 flex items-center justify-between px-6 border-b border-accent-border/50 bg-surface shrink-0">
+      <div>
+        <h1 className="text-[16px] font-extrabold text-text-primary leading-none tracking-tight">{title}</h1>
+        <p className="text-[11px] font-mono text-text-dim mt-1 leading-none">{sub}</p>
+      </div>
+
+      <div className="flex items-center gap-2.5">
         {repoName && (
-          <div className="flex items-center gap-1.5 text-[11px] text-text-muted font-mono">
-            <GitBranch className="h-3 w-3 text-text-dim" />
-            <span>{repoName}</span>
+          <div className="flex items-center gap-2 text-[12px] font-mono text-text-muted bg-overlay/60 border border-accent-border/40 rounded-lg px-3 py-1.5 max-w-xs">
+            <GitBranch className="h-3.5 w-3.5 text-text-dim shrink-0" />
+            <span className="break-all">{repoName}</span>
           </div>
         )}
 
-        <div className="flex items-center gap-1.5 text-[11px] font-mono text-text-dim">
-          <span
-            className={[
-              'h-1.5 w-1.5 rounded-full',
-              jenkinsStatus === 'connected'
-                ? 'bg-success shadow-glow-success dot-pulse'
-                : jenkinsStatus === 'disconnected'
-                ? 'bg-error'
-                : 'bg-text-dim',
-            ].join(' ')}
-          />
-          <span className={jenkinsStatus === 'connected' ? 'text-text-muted' : ''}>jenkins</span>
+        <div className={cn(
+          'flex items-center gap-2 text-[12px] font-mono px-3 py-1.5 rounded-lg border',
+          jenkinsStatus === 'connected'
+            ? 'text-success border-success-border bg-success-dim'
+            : jenkinsStatus === 'disconnected'
+            ? 'text-error border-error-border bg-error-dim'
+            : 'text-text-muted border-accent-border/40 bg-overlay/40'
+        )}>
+          <Circle className={cn('h-2 w-2 fill-current shrink-0', jenkinsStatus === 'connected' ? 'dot-pulse' : '')} />
+          <span>
+            {jenkinsStatus === 'connected'
+              ? 'Jenkins Connected'
+              : jenkinsStatus === 'disconnected'
+              ? 'Disconnected'
+              : 'Jenkins'}
+          </span>
         </div>
       </div>
     </header>

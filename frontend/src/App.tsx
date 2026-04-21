@@ -6,6 +6,7 @@ import { PipelineFeed } from '@/components/PipelineFeed'
 import { ChatPanel } from '@/components/ChatPanel'
 import { JobsBrowser } from '@/components/JobsBrowser'
 import { SettingsPanel } from '@/components/SettingsPanel'
+import { BuildDetailDrawer } from '@/components/BuildDetailDrawer'
 import { useEventStream } from '@/hooks/useEventStream'
 import type { ActivePanel, BuildCard, ChatMessage, SSEEvent } from '@/types'
 
@@ -27,6 +28,7 @@ export default function App() {
 
   // ── Jobs wire-up state lifted so it survives panel switches ───────────────
   const [wireStatus, setWireStatus] = useState<Record<string, 'ok' | 'already' | 'err'>>({})
+  const [selectedCard, setSelectedCard] = useState<BuildCard | null>(null)
 
   // ── Known Jenkins job names — used to filter phantom cards ────────────────
   const [knownJobs, setKnownJobs] = useState<Set<string>>(new Set())
@@ -35,18 +37,29 @@ export default function App() {
     setWireStatus(prev => ({ ...prev, [name]: status }))
   }
 
+  // Real liveness check — hits /api/health with 6s abort so UI reflects truth fast
+  function checkJenkinsLiveness() {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 6000)
+    fetch('/api/health', { signal: ctrl.signal })
+      .then(r => r.json())
+      .then(data => setJenkinsStatus(data?.ok ? 'connected' : 'disconnected'))
+      .catch(() => setJenkinsStatus('disconnected'))
+      .finally(() => clearTimeout(timer))
+  }
+
   // Bootstrap: fetch server settings on load
   useEffect(() => {
     fetch('/api/settings')
       .then(r => r.json())
       .then(data => {
         if (data.github_repo) setRepoName(data.github_repo)
-        if (data.configured) {
-          setJenkinsStatus('connected')
+        if (!data.configured && !localStorage.getItem('devops_ai_configured')) {
+          setSetupVisible(true)
+        }
+        if (data.github_repo) {
           localStorage.setItem('devops_ai_configured', '1')
           localStorage.setItem('devops_ai_repo', data.github_repo ?? '')
-        } else if (!localStorage.getItem('devops_ai_configured')) {
-          setSetupVisible(true)
         }
       })
       .catch(() => {
@@ -58,14 +71,12 @@ export default function App() {
       })
       .finally(() => setBootDone(true))
 
-    // Fetch real job names from Jenkins to filter phantom cards
-    fetch('/api/jobs')
-      .then(r => r.json())
-      .then(data => {
-        const list: { name: string }[] = Array.isArray(data) ? data : (data.jobs ?? [])
-        if (list.length > 0) setKnownJobs(new Set(list.map(j => j.name)))
-      })
-      .catch(() => { /* Jenkins not configured yet — show all cards */ })
+    // Initial liveness check
+    checkJenkinsLiveness()
+
+    // Poll every 30s for real Jenkins status
+    const interval = setInterval(checkJenkinsLiveness, 30_000)
+    return () => clearInterval(interval)
   }, [])
 
   // SSE event handler
@@ -105,6 +116,10 @@ export default function App() {
         if (existing) next.set(key, { ...existing, fixResult: event })
         return next
       })
+    }
+
+    if (event.type === 'jenkins_status') {
+      setJenkinsStatus(event.ok ? 'connected' : 'disconnected')
     }
 
     if (event.type === 'build_success') {
@@ -193,7 +208,13 @@ export default function App() {
         */}
         <main className="flex-1 overflow-hidden relative">
           <div className={activePanel === 'pipeline' ? 'h-full' : 'hidden'}>
-            <PipelineFeed cards={cardList} onDismiss={dismissCard} onClearAll={clearFeed} onDiscardJob={discardJob} />
+            <PipelineFeed
+              cards={cardList}
+              onDismiss={dismissCard}
+              onClearAll={clearFeed}
+              onDiscardJob={discardJob}
+              onOpenDetail={setSelectedCard}
+            />
           </div>
           <div className={activePanel === 'chat' ? 'h-full' : 'hidden'}>
             <ChatPanel
@@ -211,6 +232,7 @@ export default function App() {
           </div>
         </main>
       </div>
+      <BuildDetailDrawer card={selectedCard} onClose={() => setSelectedCard(null)} />
     </div>
   )
 }

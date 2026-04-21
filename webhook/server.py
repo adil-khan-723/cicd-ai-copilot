@@ -1,24 +1,37 @@
 import logging
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="DevOps AI Agent — Webhook Server")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    logging.basicConfig(level=getattr(logging, settings.log_level))
+    logger.info("Webhook server started on port %s", settings.webhook_port)
+
+    from ui.routes import _jenkins_health_monitor
+    import ui.routes as _ui_routes
+    _ui_routes._jenkins_monitor_task = asyncio.create_task(_jenkins_health_monitor())
+    logger.info("Jenkins health monitor started (10s poll)")
+
+    yield
+
+    import ui.routes as _ui_routes
+    if _ui_routes._jenkins_monitor_task:
+        _ui_routes._jenkins_monitor_task.cancel()
+
+
+app = FastAPI(title="DevOps AI Agent — Webhook Server", lifespan=lifespan)
 
 from ui.routes import router as ui_router
 from fastapi.staticfiles import StaticFiles
 app.include_router(ui_router)
 app.mount("/static", StaticFiles(directory="ui/static"), name="static")
-
-
-@app.on_event("startup")
-async def startup():
-    settings = get_settings()
-    logging.basicConfig(level=getattr(logging, settings.log_level))
-    logger.info("Webhook server started on port %s", settings.webhook_port)
 
 
 @app.get("/health")
@@ -242,38 +255,26 @@ async def pipeline_success(request: Request):
 @app.post("/webhook/pipeline-failure")
 async def pipeline_failure(request: Request, background_tasks: BackgroundTasks):
     """
-    Receives pipeline failure events from Jenkins or GitHub Actions.
+    Receives pipeline failure events from Jenkins.
     Validates the webhook signature, returns 200 immediately, then
     runs the full analysis pipeline in the background.
     """
     settings = get_settings()
 
-    # Detect source from headers
-    source = _detect_source(request)
-
-    # Validate signature (skip if no secret configured — dev mode)
     if settings.webhook_secret:
-        if source == "github":
-            from webhook.validators import validate_github_webhook
-            await validate_github_webhook(request, settings.webhook_secret)
-        elif source == "jenkins":
-            from webhook.validators import validate_jenkins_webhook
-            await validate_jenkins_webhook(request, settings.webhook_secret)
+        from webhook.validators import validate_jenkins_webhook
+        await validate_jenkins_webhook(request, settings.webhook_secret)
 
     payload = await request.json()
-    logger.info("Received %s failure event: %s", source, _summarise(payload, source))
+    job = payload.get("job_name") or payload.get("name", "unknown-job")
+    build = payload.get("build_number") or payload.get("number", "?")
+    logger.info("Received jenkins failure event: %s #%s", job, build)
 
-    # Return immediately — process in background
-    background_tasks.add_task(_process_failure, payload, source)
-    return JSONResponse({"status": "received", "source": source})
+    background_tasks.add_task(_process_failure, payload, "jenkins")
+    return JSONResponse({"status": "received", "source": "jenkins"})
 
 
 async def _process_failure(payload: dict, source: str) -> None:
-    """
-    Full reactive pipeline:
-    parse → extract logs → clean → verify → build context → LLM → Slack
-    """
-    import asyncio
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _process_failure_sync, payload, source)
 
@@ -284,12 +285,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
     from parser.log_cleaner import clean_log
     from analyzer.context_builder import build_context
     from analyzer.llm_client import analyze
-    from slack.notifier import send_failure_alert, update_with_analysis
-    from slack.message_templates import failure_alert_blocks
     from ui.event_bus import bus
-    from config import get_settings
-
-    settings = get_settings()
 
     try:
         # Step 1: Parse webhook payload
@@ -320,16 +316,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "detail": f"{mismatch_count} mismatches found", "status": "done",
         })
 
-        # Step 4: Post initial Slack alert (if enabled)
-        ts = None
-        if settings.slack_alerts == "enabled":
-            ts = send_failure_alert(ctx, cleaned, report=report)
-            if not ts:
-                logger.error("[pipeline] Failed to post Slack alert")
-            else:
-                logger.info("[pipeline] Slack alert posted: ts=%s", ts)
-
-        # Step 5: Build LLM context and analyze
+        # Step 4: Build LLM context and analyze
         bus.publish({
             "type": "step", "job": ctx.job_name, "build": ctx.build_number,
             "stage": "CONTEXT_BUILT", "detail": "sending to LLM...", "status": "running",
@@ -361,7 +348,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "status": llm_status,
         })
 
-        # Step 6: Always emit analysis_complete so the UI card renders
+        # Step 5: Always emit analysis_complete so the UI card renders
         bus.publish({
             "type": "analysis_complete",
             "job": ctx.job_name,
@@ -372,18 +359,28 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "fix_type": analysis.get("fix_type"),
             "confidence": analysis.get("confidence", 0),
             "log_excerpt": cleaned[:400],
-            # Ordered Jenkins/GHA stages with pass/fail/skipped status
             "pipeline_stages": [
                 {"name": name, "status": status}
                 for name, status in ctx.pipeline_stages
             ],
+            "verification": {
+                "matched_tools": report.matched_tools,
+                "mismatched_tools": [
+                    {
+                        "referenced": m.referenced,
+                        "configured": m.configured,
+                        "match_score": m.match_score,
+                    }
+                    for m in report.mismatched_tools
+                ],
+                "missing_plugins": report.missing_plugins,
+                "missing_credentials": report.missing_credentials,
+                "missing_secrets": report.missing_secrets,
+                "missing_runners": report.missing_runners,
+                "unpinned_actions": report.unpinned_actions,
+                "errors": report.errors,
+            },
         })
-
-        # Step 7: Update Slack message (if enabled)
-        if settings.slack_alerts == "enabled" and ts:
-            initial_blocks = failure_alert_blocks(ctx, cleaned, report=report)
-            update_with_analysis(ts, initial_blocks, analysis)
-            logger.info("[pipeline] Slack message updated with analysis")
 
     except Exception as e:
         logger.exception("[pipeline] Unhandled error in failure processing: %s", e)
@@ -412,32 +409,15 @@ def _run_verification(ctx, payload: dict) -> "VerificationReport":
     settings = get_settings()
 
     try:
-        if ctx.platform == "jenkins":
-            from verification.jenkins_crawler import verify_jenkins_tools
-            jenkinsfile = payload.get("jenkinsfile", "")
-            if jenkinsfile and settings.jenkins_url:
-                auth = (settings.jenkins_user, settings.jenkins_token) if settings.jenkins_token else None
-                return verify_jenkins_tools(jenkinsfile, settings.jenkins_url, auth=auth)
-
-        elif ctx.platform == "github":
-            from verification.actions_crawler import verify_actions_config
-            workflow = payload.get("workflow_content", "")
-            if workflow and ctx.repo and settings.github_token:
-                return verify_actions_config(workflow, ctx.repo, github_token=settings.github_token)
-
+        from verification.jenkins_crawler import verify_jenkins_tools
+        jenkinsfile = payload.get("jenkinsfile", "")
+        if jenkinsfile and settings.jenkins_url:
+            auth = (settings.jenkins_user, settings.jenkins_token) if settings.jenkins_token else None
+            return verify_jenkins_tools(jenkinsfile, settings.jenkins_url, auth=auth)
     except Exception as e:
         logger.warning("[verification] Failed (non-fatal): %s", e)
 
-    return VerificationReport(platform=ctx.platform)
-
-
-def _detect_source(request: Request) -> str:
-    """Identify whether the webhook came from GitHub Actions or Jenkins."""
-    if request.headers.get("X-GitHub-Event"):
-        return "github"
-    if request.headers.get("X-Jenkins-Event") or request.headers.get("X-Jenkins-Signature"):
-        return "jenkins"
-    return "unknown"
+    return VerificationReport(platform="jenkins")
 
 
 def _summarise(payload: dict, source: str) -> str:

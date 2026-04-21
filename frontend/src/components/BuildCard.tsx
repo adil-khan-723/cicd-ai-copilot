@@ -17,43 +17,41 @@ export function SuccessBuildCard({ card, onDiscard }: { card: BuildCardType; onD
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
       transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-      className="relative rounded-xl border border-success/20 overflow-hidden bg-card shadow-card"
+      className="relative rounded-xl border border-success-border overflow-hidden bg-white shadow-card"
     >
-      <div className="h-px w-full bg-gradient-to-r from-success/60 via-success/20 to-transparent" />
-      <div className="flex items-center gap-2.5 px-4 py-3">
-        <CheckCircle2 className="h-4 w-4 text-success shrink-0" strokeWidth={2} />
-        <span className="text-sm font-semibold text-text-primary font-mono truncate flex-1">
-          {card.job}
-        </span>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <Badge variant="muted">
-            <Hash className="h-2.5 w-2.5" />{card.build}
-          </Badge>
-          <Badge variant="success">passed</Badge>
+      <div className="h-[2px] w-full bg-gradient-to-r from-success via-success/30 to-transparent" />
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <CheckCircle2 className="h-[18px] w-[18px] text-success shrink-0" strokeWidth={2} />
+        <span className="text-[14px] font-semibold text-text-primary font-mono truncate flex-1">{card.job}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="flex items-center gap-1.5 text-[11px] font-mono text-text-muted bg-overlay/60 border border-accent-border/40 rounded-lg px-2 py-1">
+            <Hash className="h-3 w-3" />{card.build}
+          </span>
+          <span className="text-[11px] font-mono text-success bg-success-dim border border-success-border rounded-lg px-2 py-1">
+            passed
+          </span>
         </div>
         <Button
-          variant="success"
+          variant="ghost"
           size="sm"
           onClick={onDiscard}
-          className="ml-2 text-xs h-6 px-2.5"
+          className="ml-1 text-[12px] h-7 px-3 font-mono text-text-muted hover:text-text-primary border border-accent-border/40 rounded-lg"
         >
           Discard
         </Button>
       </div>
       {successEvent?.previous_root_cause && (
-        <div className="px-4 pb-3.5">
-          <div className="rounded-lg border border-success/10 bg-success-dim px-3 py-2.5 space-y-1">
-            <p className="text-[10px] font-mono font-semibold text-success/70 uppercase tracking-widest">
+        <div className="px-4 pb-4">
+          <div className="rounded-xl border border-success-border bg-success-dim px-3.5 py-3 space-y-1.5">
+            <p className="text-[10px] font-mono font-semibold text-success uppercase tracking-[0.12em]">
               Previous failure resolved
               {successEvent.previous_failed_build && (
-                <span className="ml-1 text-text-dim normal-case">
+                <span className="ml-1.5 text-text-muted normal-case font-normal">
                   (build #{successEvent.previous_failed_build})
                 </span>
               )}
             </p>
-            <p className="text-xs text-text-muted leading-relaxed">
-              {successEvent.previous_root_cause}
-            </p>
+            <p className="text-[13px] text-text-base leading-relaxed">{successEvent.previous_root_cause}</p>
           </div>
         </div>
       )}
@@ -65,7 +63,11 @@ const DIAGNOSTIC_TYPES = new Set([
   'diagnostic_only', 'tool_mismatch', 'missing_plugin', 'missing_credential',
 ])
 
-export function BuildCard({ card, onDismiss }: { card: BuildCardType; onDismiss: (k: string) => void }) {
+export function BuildCard({ card, onDismiss, onOpenDetail }: {
+  card: BuildCardType
+  onDismiss: (k: string) => void
+  onOpenDetail: (card: BuildCardType) => void
+}) {
   const [expanded,      setExpanded]      = useState(true)
   const [agentExpanded, setAgentExpanded] = useState(false)
   const [fixing,        setFixing]        = useState(false)
@@ -88,112 +90,96 @@ export function BuildCard({ card, onDismiss }: { card: BuildCardType; onDismiss:
     } finally { setFixing(false) }
   }
 
+  const borderColor = hasFailed  ? 'border-error-border'
+    : isRunning ? 'border-running-border'
+    : analysis  ? 'border-success-border'
+    : 'border-accent-border/40'
+
+  const accentBar = hasFailed  ? 'from-error via-error/25 to-transparent'
+    : isRunning ? 'from-running via-running/25 to-transparent'
+    : analysis  ? 'from-success via-success/25 to-transparent'
+    : 'from-accent-border/60 to-transparent'
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: dismissed ? 0.3 : 1, y: 0 }}
+      animate={{ opacity: dismissed ? 0.4 : 1, y: 0 }}
       transition={{ type: 'spring', stiffness: 400, damping: 32 }}
       className={cn(
-        'relative rounded-xl border overflow-hidden transition-opacity duration-300',
-        'bg-card shadow-card',
-        hasFailed  ? 'border-error/20'   :
-        isRunning  ? 'border-accent/20'  :
-        analysis   ? 'border-success/15' : 'border-glass',
+        'relative rounded-xl border overflow-hidden transition-opacity duration-300 bg-white shadow-card',
+        borderColor,
       )}
     >
-      {/* Top accent line */}
-      <div className={cn(
-        'h-px w-full',
-        hasFailed  ? 'bg-gradient-to-r from-error/60 via-error/20 to-transparent' :
-        isRunning  ? 'bg-gradient-to-r from-accent/60 via-accent/20 to-transparent' :
-        analysis   ? 'bg-gradient-to-r from-success/60 via-success/20 to-transparent' :
-        'bg-gradient-to-r from-border-hi to-transparent'
-      )} />
+      <div className={cn('h-[2px] w-full bg-gradient-to-r', accentBar)} />
 
-      {/* Card header */}
+      {/* Header */}
       <div
-        className="flex items-center gap-2.5 px-4 py-3 cursor-pointer select-none hover:bg-white/[0.02] transition-colors duration-150"
+        className="flex items-center gap-3 px-4 py-3.5 cursor-pointer select-none hover:bg-overlay/20 transition-colors duration-150"
         onClick={() => setExpanded(e => !e)}
       >
         <span className="text-text-dim hover:text-text-muted transition-colors">
           {expanded
-            ? <ChevronDown className="h-3.5 w-3.5" strokeWidth={1.5} />
-            : <ChevronRight className="h-3.5 w-3.5" strokeWidth={1.5} />}
+            ? <ChevronDown  className="h-4 w-4" strokeWidth={1.5} />
+            : <ChevronRight className="h-4 w-4" strokeWidth={1.5} />}
         </span>
-
-        <span className="text-sm font-semibold text-text-primary font-mono truncate flex-1">
+        <span
+          className="text-[14px] font-semibold text-text-primary font-mono truncate flex-1 cursor-pointer hover:text-accent transition-colors"
+          onClick={e => { e.stopPropagation(); onOpenDetail(card) }}
+          title="View logs and tool crawler"
+        >
           {card.job}
         </span>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          <Badge variant="muted">
-            <Hash className="h-2.5 w-2.5" />{card.build}
-          </Badge>
-
-          {isRunning && (
-            <Badge variant="accent">
-              <Loader2 className="h-2.5 w-2.5 animate-spin" />analyzing
-            </Badge>
-          )}
-
+        <div className="flex items-center gap-2 shrink-0">
+          <Badge variant="muted"><Hash className="h-3 w-3" />{card.build}</Badge>
+          {isRunning && <Badge variant="accent"><Loader2 className="h-3 w-3 animate-spin" />analyzing</Badge>}
           {analysis && !isRunning && (
             <Badge variant={analysis.confidence >= CONFIDENCE_THRESHOLD ? 'success' : 'warning'}>
               {Math.round(analysis.confidence * 100)}% conf
             </Badge>
           )}
-
-          {fixResult && (
-            <Badge variant={fixResult.success ? 'success' : 'error'}>
-              {fixResult.success ? 'fixed' : 'failed'}
-            </Badge>
-          )}
+          {fixResult && <Badge variant={fixResult.success ? 'success' : 'error'}>{fixResult.success ? 'fixed' : 'failed'}</Badge>}
         </div>
-
         <button
           onClick={e => { e.stopPropagation(); onDismiss(card.key) }}
           className="ml-1 text-text-dim hover:text-text-muted transition-colors cursor-pointer"
         >
-          <X className="h-3.5 w-3.5" strokeWidth={1.5} />
+          <X className="h-4 w-4" strokeWidth={1.5} />
         </button>
       </div>
 
       {/* Body */}
       {expanded && (
-        <div className="px-4 pb-4 space-y-3">
-          {/* Jenkins / GHA pipeline stages — always visible */}
+        <div className="px-4 pb-4 space-y-3.5">
           {analysis?.pipeline_stages && analysis.pipeline_stages.length > 0 && (
             <div>
-              <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-widest mb-1.5">
-                Pipeline Stages
-              </p>
+              <SectionLabel>Pipeline Stages</SectionLabel>
               <PipelineStageRow stages={analysis.pipeline_stages} />
             </div>
           )}
 
-          {/* Agent steps — collapsed by default, toggle to reveal */}
           <div>
             <button
               onClick={() => setAgentExpanded(v => !v)}
-              className="flex items-center gap-1.5 text-[10px] font-mono font-semibold text-text-dim uppercase tracking-widest hover:text-text-muted transition-colors cursor-pointer mb-1.5"
+              className="flex items-center gap-2 cursor-pointer mb-2 group"
             >
               {agentExpanded
-                ? <ChevronDown  className="h-3 w-3" strokeWidth={2} />
-                : <ChevronRight className="h-3 w-3" strokeWidth={2} />}
-              Agent Steps
+                ? <ChevronDown  className="h-3.5 w-3.5 text-text-dim group-hover:text-text-muted transition-colors" strokeWidth={2} />
+                : <ChevronRight className="h-3.5 w-3.5 text-text-dim group-hover:text-text-muted transition-colors" strokeWidth={2} />}
+              <span className="text-[10px] font-mono font-semibold text-text-muted uppercase tracking-[0.12em] group-hover:text-text-base transition-colors">
+                Agent Steps
+              </span>
             </button>
             {agentExpanded && <AgentStepRow stages={steps} />}
           </div>
 
           {analysis && (
-            <div className="rounded-lg border border-glass bg-surface/60 p-3.5 space-y-3">
+            <div className="rounded-xl border border-accent-border/40 bg-overlay/30 p-4 space-y-3.5">
               <InfoBlock label="Root Cause" text={analysis.root_cause} highlight />
-              {analysis.fix_suggestion && (
-                <InfoBlock label="Suggestion" text={analysis.fix_suggestion} />
-              )}
+              {analysis.fix_suggestion && <InfoBlock label="Suggestion" text={analysis.fix_suggestion} />}
               {analysis.log_excerpt && (
                 <div>
-                  <Label>Log Excerpt</Label>
-                  <pre className="mt-1 text-[11px] font-mono text-text-muted leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-28 overflow-y-auto rounded border border-glass bg-bg/60 px-3 py-2">
+                  <SectionLabel>Log Excerpt</SectionLabel>
+                  <pre className="mt-1.5 text-[12px] font-mono text-text-base leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-32 overflow-y-auto rounded-xl border border-accent-border/30 bg-white px-3.5 py-3">
                     {analysis.log_excerpt}
                   </pre>
                 </div>
@@ -201,25 +187,30 @@ export function BuildCard({ card, onDismiss }: { card: BuildCardType; onDismiss:
             </div>
           )}
 
-          {/* Actions */}
           {analysis && !fixResult && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               {canAutoFix ? (
-                <Button variant="success" size="sm" onClick={applyFix} disabled={fixing} className="gap-1.5">
-                  {fixing
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : <Wrench className="h-3 w-3" strokeWidth={2} />}
+                <Button
+                  size="sm"
+                  onClick={applyFix}
+                  disabled={fixing}
+                  className="gap-2 bg-success hover:bg-success/90 text-white font-semibold border-0 text-[13px] h-8 font-mono rounded-lg"
+                >
+                  {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
                   Apply Fix
                 </Button>
               ) : (
-                <div className="flex items-center gap-1.5 text-[11px] text-warning font-mono">
-                  <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2} />
-                  {DIAGNOSTIC_TYPES.has(analysis.fix_type)
-                    ? 'Requires manual action'
-                    : 'Low confidence — review recommended'}
+                <div className="flex items-center gap-2 text-[12px] text-warning font-mono">
+                  <AlertTriangle className="h-4 w-4" strokeWidth={2} />
+                  {DIAGNOSTIC_TYPES.has(analysis.fix_type) ? 'Requires manual action' : 'Low confidence — review recommended'}
                 </div>
               )}
-              <Button variant="ghost" size="sm" onClick={() => onDismiss(card.key)} className="ml-auto">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onDismiss(card.key)}
+                className="ml-auto text-text-muted hover:text-text-primary text-[12px] h-8 font-mono border border-accent-border/40 rounded-lg"
+              >
                 Dismiss
               </Button>
             </div>
@@ -227,10 +218,10 @@ export function BuildCard({ card, onDismiss }: { card: BuildCardType; onDismiss:
 
           {fixResult && (
             <div className={cn(
-              'text-[11px] font-mono rounded-lg px-3 py-2.5 border',
+              'text-[12px] font-mono rounded-xl px-3.5 py-3 border leading-relaxed',
               fixResult.success
-                ? 'bg-success-dim text-success border-success/15'
-                : 'bg-error-dim text-error border-error/15'
+                ? 'bg-success-dim text-success border-success-border'
+                : 'bg-error-dim text-error border-error-border'
             )}>
               {fixResult.detail}
             </div>
@@ -241,9 +232,9 @@ export function BuildCard({ card, onDismiss }: { card: BuildCardType; onDismiss:
   )
 }
 
-function Label({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-widest mb-1">
+    <p className="text-[10px] font-mono font-semibold text-text-muted uppercase tracking-[0.12em] mb-2">
       {children}
     </p>
   )
@@ -252,8 +243,8 @@ function Label({ children }: { children: React.ReactNode }) {
 function InfoBlock({ label, text, highlight }: { label: string; text: string; highlight?: boolean }) {
   return (
     <div>
-      <Label>{label}</Label>
-      <p className={cn('text-xs leading-relaxed', highlight ? 'text-text-primary' : 'text-text-muted')}>
+      <SectionLabel>{label}</SectionLabel>
+      <p className={cn('text-[13px] leading-relaxed', highlight ? 'text-text-primary font-medium' : 'text-text-base')}>
         {text}
       </p>
     </div>

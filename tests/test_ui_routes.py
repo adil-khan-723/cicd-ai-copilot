@@ -22,15 +22,13 @@ def test_health_still_works():
 
 
 def test_setup_invalid_payload_returns_422():
-    response = client.post("/api/setup", json={"github_repo": "bad"})
+    response = client.post("/api/setup", json={})
     assert response.status_code == 422
 
 
 def test_setup_valid_payload():
     with patch("ui.setup_handler.save_credentials") as mock_save:
         response = client.post("/api/setup", json={
-            "github_repo": "owner/repo",
-            "github_token": "ghp_abc123",
             "jenkins_url": "http://localhost:8080",
             "jenkins_user": "admin",
             "jenkins_token": "token123",
@@ -75,3 +73,43 @@ def test_api_fix_executes_and_returns_result():
         })
     assert response.status_code == 200
     assert response.json()["success"] is True
+
+
+def test_build_log_returns_text():
+    mock_server = MagicMock()
+    mock_server.get_build_console_output.return_value = "Started by user admin\n[Pipeline] Start of Pipeline\n"
+
+    with patch("ui.routes.jenkins.Jenkins", return_value=mock_server), \
+         patch("ui.routes.get_settings") as mock_settings:
+        mock_settings.return_value.jenkins_url = "http://localhost:8080"
+        mock_settings.return_value.jenkins_user = "admin"
+        mock_settings.return_value.jenkins_token = "token"
+        response = client.get("/api/build-log?job=my-job&build=42")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "log" in data
+    assert "Started by user admin" in data["log"]
+
+
+def test_build_log_jenkins_not_configured():
+    with patch("ui.routes.get_settings") as mock_settings:
+        mock_settings.return_value.jenkins_url = ""
+        mock_settings.return_value.jenkins_token = ""
+        response = client.get("/api/build-log?job=my-job&build=42")
+    assert response.status_code == 503
+
+
+def test_build_log_not_found():
+    import jenkins as jenkins_lib
+    mock_server = MagicMock()
+    mock_server.get_build_console_output.side_effect = jenkins_lib.NotFoundException()
+
+    with patch("ui.routes.jenkins.Jenkins", return_value=mock_server), \
+         patch("ui.routes.get_settings") as mock_settings:
+        mock_settings.return_value.jenkins_url = "http://localhost:8080"
+        mock_settings.return_value.jenkins_user = "admin"
+        mock_settings.return_value.jenkins_token = "token"
+        response = client.get("/api/build-log?job=my-job&build=42")
+
+    assert response.status_code == 404

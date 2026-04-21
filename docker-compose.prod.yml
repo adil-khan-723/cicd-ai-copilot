@@ -1,0 +1,12 @@
+# Production overrides — no source mounts, no --reload
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  webhook:
+    command: uvicorn webhook.server:app --host 0.0.0.0 --port 8000 --workers 2
+    volumes:
+      - audit_logs:/app/logs    # only logs volume, no source mount
+
+  slack-bot:
+    volumes:
+      - audit_logs:/app/logs

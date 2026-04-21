@@ -16,6 +16,23 @@ export interface PipelineStage {
   status: 'passed' | 'failed' | 'skipped'
 }
 
+export interface VerificationToolMismatch {
+  referenced: string
+  configured: string
+  match_score: number
+}
+
+export interface VerificationData {
+  matched_tools: string[]
+  mismatched_tools: VerificationToolMismatch[]
+  missing_plugins: string[]
+  missing_credentials: string[]
+  missing_secrets: string[]
+  missing_runners: string[]
+  unpinned_actions: string[]
+  errors: string[]
+}
+
 export interface AnalysisCompleteEvent {
   type: 'analysis_complete'
   job: string
@@ -27,6 +44,7 @@ export interface AnalysisCompleteEvent {
   confidence: number
   log_excerpt: string
   pipeline_stages: PipelineStage[]
+  verification?: VerificationData
 }
 
 export interface FixResultEvent {
@@ -46,7 +64,12 @@ export interface BuildSuccessEvent {
   previous_root_cause?: string
 }
 
-export type SSEEvent = StepEvent | AnalysisCompleteEvent | FixResultEvent | BuildSuccessEvent
+export interface JenkinsStatusEvent {
+  type: 'jenkins_status'
+  ok: boolean
+}
+
+export type SSEEvent = StepEvent | AnalysisCompleteEvent | FixResultEvent | BuildSuccessEvent | JenkinsStatusEvent
 
 export interface BuildCard {
   key: string
