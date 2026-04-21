@@ -48,3 +48,9 @@ frontend/dist/
 # Ollama models (stored on external SSD, not in repo)
 *.gguf
 *.bin
+
+# Claude Code / AI tooling — not part of the application
+.claude/
+.superpowers/
+graphify-out/
+docs/superpowers/
