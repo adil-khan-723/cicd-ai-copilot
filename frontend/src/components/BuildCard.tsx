@@ -179,9 +179,17 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
               {analysis.log_excerpt && (
                 <div>
                   <SectionLabel>Log Excerpt</SectionLabel>
-                  <pre className="mt-1.5 text-[12px] font-mono text-text-base leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-32 overflow-y-auto rounded-xl border border-accent-border/30 bg-white px-3.5 py-3">
-                    {analysis.log_excerpt}
-                  </pre>
+                  <button
+                    onClick={() => onOpenDetail(card)}
+                    className="mt-1.5 w-full text-left rounded-xl border border-accent-border/30 bg-white px-3.5 py-3 group hover:border-accent/40 hover:bg-overlay/40 transition-colors cursor-pointer"
+                  >
+                    <pre className="text-[12px] font-mono text-text-muted leading-relaxed whitespace-pre-wrap overflow-hidden line-clamp-3 pointer-events-none">
+                      {analysis.log_excerpt}
+                    </pre>
+                    <p className="mt-2 text-[11px] font-mono text-accent group-hover:text-accent/80 transition-colors">
+                      View full logs →
+                    </p>
+                  </button>
                 </div>
               )}
             </div>

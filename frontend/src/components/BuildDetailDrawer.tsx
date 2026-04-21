@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   X, Copy, Check, ChevronDown, ChevronRight,
   Wrench, Puzzle, KeyRound, AlertTriangle, CheckCircle2,
-  Loader2, ArrowDown, Terminal,
+  Loader2, ArrowDown, Terminal, Maximize2, Minimize2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BuildCard, VerificationData, VerificationToolMismatch } from '@/types'
@@ -16,10 +16,11 @@ interface BuildDetailDrawerProps {
 type DrawerTab = 'logs' | 'crawler'
 
 export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
-  const [tab, setTab] = useState<DrawerTab>('logs')
+  const [tab,      setTab]      = useState<DrawerTab>('logs')
+  const [expanded, setExpanded] = useState(false)
 
-  // Reset to logs tab when a new card is selected
-  useEffect(() => { if (card) setTab('logs') }, [card?.key])
+  // Reset to logs tab and collapse when a new card is selected
+  useEffect(() => { if (card) { setTab('logs'); setExpanded(false) } }, [card?.key])
 
   // Close on Escape key
   useEffect(() => {
@@ -50,8 +51,8 @@ export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', stiffness: 400, damping: 38 }}
-            className="fixed right-0 top-0 bottom-0 z-50 flex flex-col bg-surface border-l border-accent-border/60 shadow-2xl"
-            style={{ width: 'clamp(480px, 45vw, 720px)' }}
+            className="fixed right-0 top-0 bottom-0 z-50 flex flex-col bg-surface border-l border-accent-border/60 shadow-2xl transition-[width] duration-200"
+            style={{ width: expanded ? '100vw' : 'clamp(480px, 45vw, 720px)' }}
           >
             {/* Header */}
             <div className="flex items-center gap-3 px-5 py-3.5 border-b border-accent-border/40 shrink-0 bg-white">
@@ -67,6 +68,16 @@ export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
                   failed: {card.analysis.failed_stage}
                 </span>
               )}
+              <button
+                onClick={() => setExpanded(v => !v)}
+                className="text-text-dim hover:text-text-primary transition-colors cursor-pointer shrink-0"
+                aria-label={expanded ? 'Collapse drawer' : 'Expand drawer'}
+                title={expanded ? 'Collapse' : 'Expand to full width'}
+              >
+                {expanded
+                  ? <Minimize2 className="h-4 w-4" strokeWidth={1.5} />
+                  : <Maximize2 className="h-4 w-4" strokeWidth={1.5} />}
+              </button>
               <button
                 onClick={onClose}
                 className="ml-1 text-text-dim hover:text-text-primary transition-colors cursor-pointer shrink-0"
@@ -114,6 +125,41 @@ export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
   )
 }
 
+// ─── Log noise filter ────────────────────────────────────────────────────────
+// Strips Jenkins orchestration chatter — keeps only lines that carry signal.
+const NOISE_PATTERNS = [
+  /^\s*$/,                                          // blank lines
+  /\[Pipeline\] Start of Pipeline/,
+  /\[Pipeline\] End of Pipeline/,
+  /\[Pipeline\] \/\/ stage/,                        // closing stage markers
+  /\[Pipeline\] \}/,                                // closing brace
+  /\[Pipeline\] node/,
+  /\[Pipeline\] \{$/,                               // opening brace alone
+  /Running on .+ in /,                              // "Running on agent in /path"
+  /^Started by /,
+  /^Triggering /,
+  /Obtained .+ from /,                              // "Obtained Jenkinsfile from SCM"
+  /^\s*\[Pipeline\] withEnv/,
+  /^\s*\[Pipeline\] withCredentials/,
+  /^\s*\[Pipeline\] parallel/,
+  /^\s*\[Pipeline\] stage$/,
+  /Checking out .+Revision/,
+  /using credential/,
+  /Fetching upstream changes/,
+  /Merging remotes/,
+  /FETCH_HEAD/,
+  /Cleaning workspace/,
+  / > git /,                                        // raw git commands
+  /^\s*\[Pipeline\] script$/,
+]
+
+function filterLog(raw: string): string {
+  return raw
+    .split('\n')
+    .filter(line => !NOISE_PATTERNS.some(p => p.test(line)))
+    .join('\n')
+}
+
 // ─── Logs Tab ────────────────────────────────────────────────────────────────
 
 interface LogsTabProps {
@@ -141,7 +187,7 @@ function LogsTab({ job, build, failedStage }: LogsTabProps) {
         }
         return r.json()
       })
-      .then(data => setLog(data.log ?? ''))
+      .then(data => setLog(filterLog(data.log ?? '')))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [job, build])
