@@ -51,3 +51,99 @@ def test_analysis_complete_includes_verification():
     assert "unpinned_actions" in v
     assert "errors" in v
     assert "MY_SECRET" in v["missing_credentials"]
+
+
+# ── Stage detection regression tests ─────────────────────────────────────────
+
+REAL_LOG_STAGE_FAIL = """Started by user admin
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Checkout)
+[Pipeline] echo
+Checking out code...
+[Pipeline] sh
++ echo checkout done
+checkout done
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Build)
+[Pipeline] echo
+Building...
+[Pipeline] sh
++ nonexistent-command --version
+/var/jenkins_home/workspace/stage-fail-test@tmp/script.sh: 1: nonexistent-command: not found
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Test)
+Stage "Test" skipped due to earlier failure(s)
+[Pipeline] getContext
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 127
+Finished: FAILURE"""
+
+
+def test_detect_stages_block_aware():
+    """Build fails → Test must be skipped, not failed. Global ERROR must not pollute skipped stages."""
+    from webhook.server import _detect_stages
+    stages = _detect_stages(REAL_LOG_STAGE_FAIL)
+    by_name = {s["name"]: s["status"] for s in stages}
+    assert by_name["Checkout"] == "passed", f"Checkout should be passed, got {by_name['Checkout']}"
+    assert by_name["Build"]    == "failed", f"Build should be failed, got {by_name['Build']}"
+    assert by_name["Test"]     == "skipped", f"Test should be skipped, got {by_name['Test']}"
+
+
+def test_detect_failed_stage_block_aware():
+    """_detect_failed_stage returns the stage whose own block contains the error."""
+    from webhook.server import _detect_failed_stage
+    assert _detect_failed_stage(REAL_LOG_STAGE_FAIL) == "Build"
+
+
+def test_detect_stages_all_pass():
+    """All stages passed — none should be marked failed or skipped."""
+    from webhook.server import _detect_stages
+    log = """[Pipeline] { (Checkout)
++ echo done
+checkout done
+[Pipeline] }
+[Pipeline] { (Build)
++ mvn install
+BUILD SUCCESS
+[Pipeline] }
+[Pipeline] { (Test)
+Tests run: 10, Failures: 0
+[Pipeline] }"""
+    stages = _detect_stages(log)
+    for s in stages:
+        assert s["status"] == "passed", f"{s['name']} should be passed"
+
+
+def test_detect_stages_skipped_after_fail():
+    """All stages after the failed one must be skipped, even if they have no error text."""
+    from webhook.server import _detect_stages
+    log = """[Pipeline] { (Checkout)
+checkout done
+[Pipeline] }
+[Pipeline] { (Build)
+error: compilation failed
+[Pipeline] }
+[Pipeline] { (Test)
+Stage "Test" skipped due to earlier failure(s)
+[Pipeline] }
+[Pipeline] { (Deploy)
+Stage "Deploy" skipped due to earlier failure(s)
+[Pipeline] }"""
+    stages = _detect_stages(log)
+    by_name = {s["name"]: s["status"] for s in stages}
+    assert by_name["Checkout"] == "passed"
+    assert by_name["Build"]    == "failed"
+    assert by_name["Test"]     == "skipped"
+    assert by_name["Deploy"]   == "skipped"

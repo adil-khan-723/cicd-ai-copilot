@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -148,75 +149,122 @@ def _process_notification_success_sync(job: str, build: str) -> None:
     logger.info("[notification] Success published: %s #%s", job, build)
 
 
-def _detect_failed_stage(console_log: str) -> str:
+_INTERNAL_STAGES = frozenset({
+    "Declarative: Post Actions",
+    "Declarative: Checkout SCM",
+    "Post Actions",
+})
+
+# Matches the start of a named stage block: [Pipeline] { (StageName)
+_STAGE_OPEN_RE  = re.compile(r'^\[Pipeline\] \{ \((.+?)\)\s*$')
+# Matches closing brace for a stage
+_STAGE_CLOSE_RE = re.compile(r'^\[Pipeline\] \}')
+# Error indicators that signal a stage actually failed (not just was skipped)
+_STAGE_ERROR_RE = re.compile(
+    r'(?:^ERROR\b|: not found$|command not found|exit code [1-9]|FAILED|Exception|'
+    r'Build step .* failed|returned exit code|fatal:|error:)',
+    re.IGNORECASE | re.MULTILINE,
+)
+# Jenkins declarative: stage was skipped because an earlier stage failed
+_SKIP_RE = re.compile(r'Stage ".+?" skipped due to earlier failure', re.IGNORECASE)
+
+
+def _parse_stage_blocks(console_log: str) -> list[tuple[str, str]]:
     """
-    Try to extract which stage failed from the console log.
-    Looks for '[Pipeline] { (StageName)' lines followed by error indicators.
-    Falls back to 'unknown'.
+    Parse console log into a list of (stage_name, block_text) tuples,
+    preserving order and excluding internal Jenkins stages.
+
+    Each block_text is the text from the opening [Pipeline] { (Name) line
+    up to (but not including) the corresponding [Pipeline] } line.
     """
-    if not console_log:
-        return "unknown"
+    lines = console_log.splitlines()
+    result: list[tuple[str, str]] = []
+    depth = 0
+    current_name: str | None = None
+    current_lines: list[str] = []
 
-    import re
-    # Find all stage names and their positions
-    stage_pattern = re.compile(r'\[Pipeline\] \{ \((.+?)\)')
-    error_pattern = re.compile(r'(?:ERROR:|FAILED|error:|Build step.*failed|exit code \d+[^0])', re.IGNORECASE)
+    for line in lines:
+        open_match = _STAGE_OPEN_RE.match(line.rstrip())
+        if open_match:
+            stage_name = open_match.group(1)
+            if stage_name not in _INTERNAL_STAGES:
+                if current_name is not None:
+                    result.append((current_name, "\n".join(current_lines)))
+                current_name = stage_name
+                current_lines = [line]
+                depth = 1
+                continue
 
-    stages = list(stage_pattern.finditer(console_log))
-    if not stages:
-        return "unknown"
+        if current_name is not None:
+            if _STAGE_OPEN_RE.match(line.rstrip()):
+                depth += 1
+            elif _STAGE_CLOSE_RE.match(line.rstrip()):
+                depth -= 1
+                if depth <= 0:
+                    result.append((current_name, "\n".join(current_lines)))
+                    current_name = None
+                    current_lines = []
+                    depth = 0
+                    continue
+            current_lines.append(line)
 
-    # Find position of first error
-    error_match = error_pattern.search(console_log)
-    if not error_match:
-        return stages[-1].group(1) if stages else "unknown"
+    if current_name is not None:
+        result.append((current_name, "\n".join(current_lines)))
 
-    error_pos = error_match.start()
-
-    # The failed stage is the last stage that started before the error
-    failed_stage = "unknown"
-    for match in stages:
-        if match.start() < error_pos:
-            name = match.group(1)
-            # Skip internal Jenkins stages
-            if name not in ("Declarative: Post Actions", "Declarative: Checkout SCM"):
-                failed_stage = name
-        else:
-            break
-
-    return failed_stage
+    return result
 
 
 def _detect_stages(console_log: str) -> list:
     """
     Parse stage names and statuses from the console log.
     Returns list of {"name": str, "status": "passed"|"failed"|"skipped"}.
+
+    Uses block-aware parsing: each stage's own text is examined for errors
+    and skip markers so that a global ERROR at the end of the log does not
+    incorrectly attribute the failure to a later (skipped) stage.
     """
     if not console_log:
         return []
 
-    import re
-    stage_starts = re.findall(r'\[Pipeline\] \{ \((.+?)\)', console_log)
-    # Filter internal stages
-    internal = {"Declarative: Post Actions", "Declarative: Checkout SCM", "Post Actions"}
-    stages = [s for s in stage_starts if s not in internal]
-
-    if not stages:
+    blocks = _parse_stage_blocks(console_log)
+    if not blocks:
         return []
 
-    failed_stage = _detect_failed_stage(console_log)
     result = []
     failed_seen = False
-    for name in stages:
-        if name == failed_stage:
+
+    for name, block in blocks:
+        if failed_seen:
+            result.append({"name": name, "status": "skipped"})
+            continue
+
+        if _SKIP_RE.search(block):
+            # Jenkins explicitly says this stage was skipped
+            result.append({"name": name, "status": "skipped"})
+            continue
+
+        if _STAGE_ERROR_RE.search(block):
             result.append({"name": name, "status": "failed"})
             failed_seen = True
-        elif failed_seen:
-            result.append({"name": name, "status": "skipped"})
         else:
             result.append({"name": name, "status": "passed"})
 
     return result
+
+
+def _detect_failed_stage(console_log: str) -> str:
+    """
+    Return the name of the first stage that contains an error in its own block.
+    Falls back to 'unknown'.
+    """
+    if not console_log:
+        return "unknown"
+
+    for stage in _detect_stages(console_log):
+        if stage["status"] == "failed":
+            return stage["name"]
+
+    return "unknown"
 
 
 @app.post("/webhook/pipeline-success")
