@@ -8,13 +8,15 @@ Routes:
   POST /api/setup     — save credentials
   POST /api/chat      — agent chat (streaming)
   POST /api/fix       — execute approved fix
-  POST /api/commit    — commit pipeline file to GitHub + apply to Jenkins
   POST /api/trigger   — trigger a Jenkins job manually
 """
 import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
+
+import jenkins
+from config import get_settings
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -23,6 +25,47 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# ── Jenkins health monitor ──────────────────────────────────────────────────
+
+_jenkins_monitor_task: asyncio.Task | None = None
+
+
+async def _jenkins_health_monitor() -> None:
+    """Poll Jenkins every 10s; push jenkins_status SSE event only on change."""
+    import requests
+    from config import get_settings
+    from ui.event_bus import bus
+
+    last: bool | None = None
+
+    def _ping() -> bool:
+        s = get_settings()
+        if not s.jenkins_url:
+            return False
+        try:
+            r = requests.get(
+                s.jenkins_url.rstrip('/') + '/api/json',
+                auth=(s.jenkins_user or '', s.jenkins_token or ''),
+                timeout=5,
+            )
+            return r.status_code < 500
+        except Exception:
+            return False
+
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            ok = await asyncio.wait_for(loop.run_in_executor(None, _ping), timeout=6.0)
+        except Exception:
+            ok = False
+
+        if ok is not last:
+            last = ok
+            bus.publish({"type": "jenkins_status", "ok": ok})
+            logger.info("Jenkins status changed → %s", "up" if ok else "down")
+
+        await asyncio.sleep(10)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -56,8 +99,6 @@ async def events():
 # ── Setup wizard ───────────────────────────────────────────────────────────
 
 class SetupPayload(BaseModel):
-    github_repo: str
-    github_token: str
     jenkins_url: str
     jenkins_user: str
     jenkins_token: str
@@ -71,6 +112,41 @@ async def setup(payload: SetupPayload):
         return {"ok": True}
     except SetupError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+# ── Jenkins health ─────────────────────────────────────────────────────────
+
+@router.get("/api/health")
+async def health():
+    """Fast liveness check — HTTP ping to Jenkins /api/json with 5s timeout."""
+    import requests
+    from config import get_settings
+
+    def _ping():
+        s = get_settings()
+        if not s.jenkins_url:
+            return False
+        try:
+            url = s.jenkins_url.rstrip('/') + '/api/json'
+            r = requests.get(
+                url,
+                auth=(s.jenkins_user or '', s.jenkins_token or ''),
+                timeout=5,
+            )
+            return r.status_code < 500
+        except Exception:
+            return False
+
+    loop = asyncio.get_event_loop()
+    try:
+        ok = await asyncio.wait_for(
+            loop.run_in_executor(None, _ping),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        ok = False
+
+    return {"ok": ok}
 
 
 # ── Jenkins jobs ───────────────────────────────────────────────────────────
@@ -93,6 +169,41 @@ async def trigger(payload: TriggerPayload):
         None, trigger_job, payload.job_name
     )
     return result
+
+
+# ── Build log ──────────────────────────────────────────────────────────────
+
+@router.get("/api/build-log")
+async def build_log(job: str, build: int):
+    s = get_settings()
+    if not s.jenkins_url or not s.jenkins_token:
+        raise HTTPException(status_code=503, detail="Jenkins not configured")
+
+    def _fetch():
+        server = jenkins.Jenkins(
+            s.jenkins_url,
+            username=s.jenkins_user or "",
+            password=s.jenkins_token,
+        )
+        try:
+            return server.get_build_console_output(job, build)
+        except jenkins.NotFoundException:
+            return None
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not fetch log from Jenkins: {e}")
+
+    loop = asyncio.get_event_loop()
+    try:
+        log = await loop.run_in_executor(None, _fetch)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch log from Jenkins: {e}")
+
+    if log is None:
+        raise HTTPException(status_code=404, detail="Build not found")
+
+    return {"log": log}
 
 
 # ── Agent chat ─────────────────────────────────────────────────────────────
@@ -127,12 +238,10 @@ async def settings():
     from config import get_settings
     s = get_settings()
     return {
-        "github_repo": s.github_repo,
         "jenkins_url": s.jenkins_url,
         "jenkins_user": s.jenkins_user,
-        "slack_alerts": s.slack_alerts,
         "llm_provider": s.llm_provider,
-        "configured": bool(s.github_repo and s.jenkins_url),
+        "configured": bool(s.jenkins_url and s.jenkins_token),
     }
 
 
@@ -257,50 +366,3 @@ def _inject_webhook_blocks(job_name: str) -> dict:
 
 # ── Commit pipeline file ───────────────────────────────────────────────────
 
-class CommitPayload(BaseModel):
-    platform: str
-    content: str
-    description: str
-    repo: Optional[str] = None
-    apply_to_jenkins: bool = True
-
-
-@router.post("/api/commit")
-async def commit(payload: CommitPayload):
-    from copilot.repo_committer import commit_pipeline_file
-    from config import get_settings
-
-    settings = get_settings()
-    repo = payload.repo or settings.github_repo
-    if not repo:
-        raise HTTPException(
-            status_code=422,
-            detail="No GitHub repo configured. Run setup first.",
-        )
-
-    try:
-        file_path, commit_url = await asyncio.get_event_loop().run_in_executor(
-            None, commit_pipeline_file,
-            repo, payload.platform, payload.content, payload.description,
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    jenkins_result = None
-    if payload.apply_to_jenkins and payload.platform == "jenkins":
-        from copilot.jenkins_configurator import create_job
-        job_name = repo.split("/")[-1]
-        try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, create_job, job_name, payload.content
-            )
-            jenkins_result = {"ok": True, "job": job_name}
-        except Exception as e:
-            jenkins_result = {"ok": False, "error": str(e)}
-
-    return {
-        "ok": True,
-        "file_path": file_path,
-        "commit_url": commit_url,
-        "jenkins": jenkins_result,
-    }
