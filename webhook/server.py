@@ -375,6 +375,9 @@ def _process_failure_sync(payload: dict, source: str) -> None:
                 ],
                 "missing_plugins": report.missing_plugins,
                 "missing_credentials": report.missing_credentials,
+                "missing_secrets": report.missing_secrets,
+                "missing_runners": report.missing_runners,
+                "unpinned_actions": report.unpinned_actions,
                 "errors": report.errors,
             },
         })

@@ -1,10 +1,6 @@
-# tests/test_webhook_server.py
 import pytest
 from unittest.mock import patch, MagicMock
-from fastapi.testclient import TestClient
 from webhook.server import app
-
-client = TestClient(app)
 
 MOCK_PAYLOAD = {
     "job_name": "test-job",
@@ -17,7 +13,7 @@ MOCK_PAYLOAD = {
 
 
 def test_analysis_complete_includes_verification():
-    """analysis_complete SSE event must include a verification key."""
+    """analysis_complete SSE event must include a verification key with all VerificationReport fields."""
     from ui.event_bus import bus
 
     published = []
@@ -50,5 +46,8 @@ def test_analysis_complete_includes_verification():
     assert "mismatched_tools" in v
     assert "missing_plugins" in v
     assert "missing_credentials" in v
+    assert "missing_secrets" in v
+    assert "missing_runners" in v
+    assert "unpinned_actions" in v
     assert "errors" in v
     assert "MY_SECRET" in v["missing_credentials"]
