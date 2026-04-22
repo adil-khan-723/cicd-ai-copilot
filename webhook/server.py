@@ -80,48 +80,50 @@ async def _process_notification_failure(job: str, build: str, payload: dict) -> 
 
 
 def _process_notification_failure_sync(job: str, build: str, payload: dict) -> None:
-    """Fetch console log from Jenkins and run the full analysis pipeline."""
-    from ui.event_bus import bus
+    """Fetch console log + Jenkinsfile from Jenkins and run the full analysis pipeline."""
     from config import get_settings
+    import xml.etree.ElementTree as ET
 
     settings = get_settings()
 
-    try:
-        # Fetch console log from Jenkins API
-        console_log = ""
-        if settings.jenkins_url and settings.jenkins_token:
+    console_log = ""
+    jenkinsfile = ""
+
+    if settings.jenkins_url and settings.jenkins_token:
+        try:
+            import jenkins as jenkins_lib
+            server = jenkins_lib.Jenkins(
+                settings.jenkins_url,
+                username=settings.jenkins_user,
+                password=settings.jenkins_token,
+            )
+            console_log = server.get_build_console_output(job, int(build))
+            logger.info("[notification] Fetched console log: %d chars for %s #%s", len(console_log), job, build)
+
             try:
-                import jenkins as jenkins_lib
-                server = jenkins_lib.Jenkins(
-                    settings.jenkins_url,
-                    username=settings.jenkins_user,
-                    password=settings.jenkins_token,
-                )
-                console_log = server.get_build_console_output(job, int(build))
-                logger.info("[notification] Fetched console log: %d chars for %s #%s", len(console_log), job, build)
+                config_xml = server.get_job_config(job)
+                tree = ET.fromstring(config_xml)
+                script_el = tree.find('.//script')
+                if script_el is not None and script_el.text:
+                    jenkinsfile = script_el.text.strip()
+                    logger.info("[notification] Extracted Jenkinsfile: %d chars", len(jenkinsfile))
             except Exception as e:
-                logger.warning("[notification] Could not fetch console log: %s", e)
+                logger.warning("[notification] Could not fetch Jenkinsfile: %s", e)
 
-        # Build a synthetic webhook payload and run the existing pipeline
-        synthetic_payload = {
-            "job_name":     job,
-            "build_number": build,
-            "failed_stage": _detect_failed_stage(console_log),
-            "status":       "FAILURE",
-            "stages":       _detect_stages(console_log),
-            "log":          console_log[-8000:] if console_log else "No log available",
-        }
+        except Exception as e:
+            logger.warning("[notification] Could not fetch console log: %s", e)
 
-        # Reuse the existing sync pipeline
-        _process_failure_sync(synthetic_payload, "jenkins")
+    synthetic_payload = {
+        "job_name":     job,
+        "build_number": build,
+        "failed_stage": _detect_failed_stage(console_log),
+        "status":       "FAILURE",
+        "stages":       _detect_stages(console_log),
+        "log":          console_log[-8000:] if console_log else "No log available",
+        "jenkinsfile":  jenkinsfile,
+    }
 
-    except Exception as e:
-        logger.exception("[notification] Error processing failure for %s #%s: %s", job, build, e)
-        from ui.event_bus import bus
-        bus.publish({
-            "type": "step", "job": job, "build": build,
-            "stage": "PIPELINE_ERROR", "detail": str(e), "status": "failed",
-        })
+    _process_failure_sync(synthetic_payload, "jenkins")
 
 
 async def _process_notification_success(job: str, build: str) -> None:

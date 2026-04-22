@@ -147,3 +147,33 @@ Stage "Deploy" skipped due to earlier failure(s)
     assert by_name["Build"]    == "failed"
     assert by_name["Test"]     == "skipped"
     assert by_name["Deploy"]   == "skipped"
+
+
+def test_notification_failure_fetches_jenkinsfile():
+    """Synthetic payload must include jenkinsfile so tool crawler runs."""
+    from unittest.mock import patch, MagicMock
+    from webhook.server import _process_notification_failure_sync
+
+    mock_server = MagicMock()
+    mock_server.get_build_console_output.return_value = (
+        "[Pipeline] { (Test)\nERROR: test failed\n[Pipeline] }"
+    )
+    mock_server.get_job_config.return_value = """<?xml version='1.1'?>
+<flow-definition>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition">
+    <script>pipeline { agent any; stages { stage('Test') { steps { sh 'pytest' } } } }</script>
+  </definition>
+</flow-definition>"""
+
+    captured = {}
+
+    def fake_process(payload, source):
+        captured['payload'] = payload
+
+    with patch('jenkins.Jenkins', return_value=mock_server), \
+         patch('webhook.server._process_failure_sync', side_effect=fake_process):
+        _process_notification_failure_sync("my-job", "42", {})
+
+    assert 'jenkinsfile' in captured.get('payload', {}), \
+        "Synthetic payload must contain jenkinsfile key"
+    assert "pipeline {" in captured['payload']['jenkinsfile']
