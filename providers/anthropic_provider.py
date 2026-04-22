@@ -5,6 +5,7 @@ Analysis tasks  → claude-haiku-4-5-20251001  (fast, cheap)
 Generation tasks → claude-sonnet-4-6          (quality critical)
 """
 import logging
+from typing import Generator
 import anthropic as anthropic_sdk
 from providers.base import BaseLLMProvider
 from config import get_settings
@@ -41,6 +42,30 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             response = client.messages.create(**kwargs)
             return response.content[0].text
+        except anthropic_sdk.APIConnectionError as e:
+            raise RuntimeError(f"Anthropic API connection error: {e}")
+        except anthropic_sdk.AuthenticationError:
+            raise RuntimeError("Anthropic API key is invalid or not set.")
+        except anthropic_sdk.RateLimitError:
+            raise RuntimeError("Anthropic rate limit exceeded — try again later.")
+        except anthropic_sdk.APIStatusError as e:
+            raise RuntimeError(f"Anthropic API error {e.status_code}: {e.message}")
+
+    def stream_complete(self, prompt: str, system: str = "") -> Generator[str, None, None]:
+        """Stream response tokens from Anthropic using the SDK's native streaming API."""
+        client = self._get_client()
+        kwargs: dict = {
+            "model": self._model,
+            "max_tokens": 2048,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
+
+        try:
+            with client.messages.stream(**kwargs) as stream:
+                for text in stream.text_stream:
+                    yield text
         except anthropic_sdk.APIConnectionError as e:
             raise RuntimeError(f"Anthropic API connection error: {e}")
         except anthropic_sdk.AuthenticationError:

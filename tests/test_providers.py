@@ -123,6 +123,25 @@ class TestAnthropicProvider:
         p._client = mock_client
         assert p.is_available() is False
 
+    def test_anthropic_stream_complete_yields_multiple_chunks(self):
+        """stream_complete must yield multiple chunks, not one big blob."""
+        p = self._make_provider()
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.text_stream = iter(["Hello", " world", "!"])
+
+        mock_client = MagicMock()
+        mock_client.messages.stream.return_value = mock_stream
+
+        p._client = mock_client
+
+        chunks = list(p.stream_complete("say hello"))
+
+        assert len(chunks) > 1, f"Expected multiple chunks, got {len(chunks)}: {chunks}"
+        assert "".join(chunks) == "Hello world!"
+        mock_client.messages.stream.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Factory — provider routing tests
