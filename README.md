@@ -60,7 +60,7 @@ Tool verification — is Maven configured? does the tool name in the Jenkinsfile
 The agent NEVER executes fixes automatically. Every fix requires explicit manual approval via web UI buttons. This is intentional — AI should not have unchecked access to production infrastructure. This pattern is called Human-in-the-Loop and it is how production AI systems are built responsibly.
 
 ### 4. Provider Agnostic
-No model is hardcoded anywhere. Every LLM call goes through a provider abstraction layer. Switching from Claude to Ollama to Groq requires only a .env change — zero code changes. This makes the project work completely free on local models.
+No model is hardcoded anywhere. Every LLM call goes through a provider abstraction layer. Switching from Claude to Ollama requires only a .env change — zero code changes. This makes the project work completely free on local models.
 
 ### 5. Confidence Thresholds
 Fix execution only proceeds if the LLM returns a confidence level above a configured threshold. Low confidence responses show the analysis but do not offer an execute button — only a manual review option.
@@ -405,7 +405,6 @@ Actions:
 | CI/CD Integration | Jenkins + GitHub Actions |
 | Local LLM | Ollama (Llama 3.1 8B, Qwen2.5-Coder 32B, Mistral 7B) |
 | Cloud LLM | Claude API (Haiku 3.5 + Sonnet 4.5) |
-| Alternative LLM | Groq (free tier, 70B), Gemini (free tier) |
 | Language | Python 3.11+ |
 | Webhook Server | FastAPI |
 | Jenkins API | python-jenkins |
@@ -428,8 +427,6 @@ devops-ai-agent/
 │   ├── factory.py                       # Router + fallback logic
 │   ├── anthropic_provider.py            # Claude Haiku / Sonnet
 │   ├── ollama_provider.py               # Local Llama / Qwen / Mistral
-│   ├── groq_provider.py                 # Groq free tier
-│   └── gemini_provider.py               # Google Gemini free tier
 │
 ├── parser/                              # Pipeline result parsing — NO LLM
 │   ├── __init__.py
@@ -641,12 +638,6 @@ PIPELINE_GENERATION_PROVIDER=anthropic
 PIPELINE_GENERATION_MODEL=claude-sonnet-4-6
 ```
 
-**Free cloud tier only:**
-```env
-DEFAULT_PROVIDER=groq
-GROQ_DEFAULT_MODEL=llama-3.1-70b-versatile
-```
-
 ---
 
 ## Local Model Recommendations
@@ -702,7 +693,6 @@ Compare to feeding full pipeline: 10,000+ tokens. 90% reduction.
 |---|---|
 | Claude Haiku 3.5 | ~$0.0000023 |
 | Claude Sonnet 4.5 | ~$0.0000085 |
-| Groq Llama 70B | Free tier |
 | Ollama local | $0.00 |
 
 ### Monthly production cost
@@ -876,7 +866,7 @@ Add Jenkins user to docker group and restart.
 # ── LLM ROUTING ──────────────────────────────────────────
 
 DEFAULT_PROVIDER=anthropic
-# Options: anthropic, ollama, groq, gemini
+# Options: anthropic, ollama
 
 LOG_ANALYSIS_PROVIDER=anthropic
 LOG_ANALYSIS_MODEL=claude-haiku-4-5-20251001
@@ -902,12 +892,6 @@ ANTHROPIC_API_KEY=sk-ant-...
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_DEFAULT_MODEL=llama3.1:8b
 OLLAMA_MODELS=/Volumes/YourSSD/ollama-models
-
-GROQ_API_KEY=gsk_...
-GROQ_DEFAULT_MODEL=llama-3.1-70b-versatile
-
-GEMINI_API_KEY=AIza...
-GEMINI_DEFAULT_MODEL=gemini-2.0-flash
 
 # ── JENKINS ──────────────────────────────────────────────
 

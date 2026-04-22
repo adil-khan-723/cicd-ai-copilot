@@ -354,7 +354,7 @@ Stage: Docker Build
 
 **Fallback order (from `.env` config):**
 1. Configured primary provider (e.g., `ollama`)
-2. If unavailable → try secondary (e.g., `groq`)
+2. If unavailable → try secondary (e.g., `anthropic`)
 3. If all fail → send web UI alert: "LLM unavailable, manual review required"
 
 **Verify:** 
@@ -491,11 +491,9 @@ Stage: Docker Build
 ---
 
 ### Increment 30 — Cloud LLM Providers
-**What:** Wire up Claude, Groq, Gemini — all via `.env` switch  
+**What:** Wire up Claude — all via `.env` switch  
 **Files:**
 - `providers/anthropic_provider.py` — Claude Haiku (analysis) + Sonnet (generation)
-- `providers/groq_provider.py` — Llama 70B on Groq free tier
-- `providers/gemini_provider.py` — Gemini via Google AI Studio
 
 **Update `providers/factory.py`:** recognize new provider names from `LLM_PROVIDER` env var
 
@@ -519,8 +517,6 @@ Stage: Docker Build
 **Test matrix:**
 - Ollama (local) → analysis + generation ✓
 - Anthropic → analysis + generation ✓
-- Groq → analysis ✓
-- Gemini → analysis ✓
 - Fallback chain: kill primary → secondary activates ✓
 
 **Verify:** `pytest tests/test_providers.py -v` — all provider tests pass
@@ -614,8 +610,6 @@ Stage: Docker Build
 # Switch any time — zero code changes
 LLM_PROVIDER=ollama              # local-first (start here)
 # LLM_PROVIDER=anthropic         # Claude Haiku/Sonnet
-# LLM_PROVIDER=groq              # Free 70B via Groq
-# LLM_PROVIDER=gemini            # Free tier via Google
 
 ANALYSIS_MODEL=llama3.1:8b
 GENERATION_MODEL=qwen2.5-coder:14b
@@ -625,8 +619,6 @@ OLLAMA_MODELS=/Volumes/SSD/ollama-models  # external SSD
 
 # Cloud providers (add keys when needed)
 ANTHROPIC_API_KEY=
-GROQ_API_KEY=
-GEMINI_API_KEY=
 ```
 
 ---

@@ -28,7 +28,3 @@ class TestValidateConfig:
         settings = _make_settings("ollama", "")
         validate_config(settings)  # must not raise
 
-    def test_groq_provider_no_anthropic_key_needed(self):
-        from config.validator import validate_config
-        settings = _make_settings("groq", "")
-        validate_config(settings)  # must not raise

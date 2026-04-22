@@ -21,7 +21,7 @@ An AI-powered agent that monitors CI/CD pipelines (Jenkins + GitHub Actions), an
 
 ### Tech Stack
 - Python 3.11+, FastAPI (webhook server), React web UI
-- LLMs: Claude Haiku/Sonnet (Anthropic), Ollama (Llama 3.1 8B, Qwen2.5-Coder 32B, Mistral 7B), Groq, Gemini
+- LLMs: Claude Haiku/Sonnet (Anthropic), Ollama (Llama 3.1 8B, Qwen2.5-Coder 32B, Mistral 7B)
 - Jenkins API (python-jenkins), GitHub API (PyGithub)
 - Docker + Docker Compose, Redis (optional cache)
 

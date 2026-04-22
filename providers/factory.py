@@ -4,7 +4,7 @@ LLM provider factory with fallback chain (Increment 20).
 Fallback order (configured via .env):
   1. LLM_PROVIDER (primary)
   2. LLM_FALLBACK_PROVIDER (secondary, if primary unavailable)
-  3. All fail → raise ProviderUnavailableError (caller sends Slack alert)
+  3. All fail → raise ProviderUnavailableError
 """
 import logging
 from providers.base import BaseLLMProvider
@@ -87,15 +87,7 @@ def _build_provider(
         )
         return AnthropicProvider(model=model)
 
-    if provider_name == "groq":
-        from providers.groq_provider import GroqProvider
-        return GroqProvider(model=settings.groq_model)
-
-    if provider_name == "gemini":
-        from providers.gemini_provider import GeminiProvider
-        return GeminiProvider(model=settings.gemini_model)
-
     raise ValueError(
         f"Unknown LLM provider '{provider_name}'. "
-        "Valid options: ollama | anthropic | groq | gemini"
+        "Valid options: ollama | anthropic"
     )

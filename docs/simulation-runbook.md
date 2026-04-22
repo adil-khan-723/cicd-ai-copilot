@@ -297,25 +297,25 @@ print(result2)   # None
 ```python
 from unittest.mock import patch, MagicMock
 
-# Simulate: primary (ollama) down, fallback (groq) up
+# Simulate: primary (ollama) down, fallback (anthropic) up
 with patch("providers.factory.get_settings") as mock_s:
     mock_s.return_value.llm_provider = "ollama"
-    mock_s.return_value.llm_fallback_provider = "groq"
+    mock_s.return_value.llm_fallback_provider = "anthropic"
     mock_s.return_value.analysis_model = "llama3.1:8b"
     mock_s.return_value.generation_model = "qwen2.5-coder:14b"
     mock_s.return_value.ollama_base_url = "http://localhost:11434"
     mock_s.return_value.ollama_timeout = 30
 
     with patch("providers.ollama_provider.get_settings", mock_s), \
-         patch("providers.groq_provider.get_settings") as groq_s:
-        groq_s.return_value.groq_api_key = "gsk_test"
-        groq_s.return_value.groq_model = "llama-3.3-70b-versatile"
+         patch("providers.anthropic_provider.get_settings") as ant_s:
+        ant_s.return_value.anthropic_api_key = "sk-ant-test"
+        ant_s.return_value.anthropic_analysis_model = "claude-haiku-4-5-20251001"
 
         with patch("providers.ollama_provider.OllamaProvider.is_available", return_value=False), \
-             patch("providers.groq_provider.GroqProvider.is_available", return_value=True):
+             patch("providers.anthropic_provider.AnthropicProvider.is_available", return_value=True):
             from providers.factory import get_provider
             provider = get_provider("analysis")
-            print(provider.name)   # groq/llama-3.3-70b-versatile  ← fallback activated
+            print(provider.name)   # anthropic/claude-haiku-4-5-20251001  ← fallback activated
 ```
 
 ---
@@ -651,7 +651,7 @@ print("\n✓ Copilot mode simulation complete.")
 
 ## 8. Failure Injection — How the System Behaves When Things Go Wrong
 
-### 8a. Ollama Down → Fallback to Groq
+### 8a. Ollama Down → Fallback to Anthropic
 
 ```python
 import respx, httpx
@@ -659,24 +659,24 @@ from unittest.mock import patch, MagicMock
 
 with patch("providers.factory.get_settings") as mock_s:
     mock_s.return_value.llm_provider = "ollama"
-    mock_s.return_value.llm_fallback_provider = "groq"
+    mock_s.return_value.llm_fallback_provider = "anthropic"
     mock_s.return_value.analysis_model = "llama3.1:8b"
     mock_s.return_value.generation_model = "qwen2.5-coder:14b"
     mock_s.return_value.ollama_base_url = "http://localhost:11434"
     mock_s.return_value.ollama_timeout = 30
 
-    with patch("providers.groq_provider.get_settings") as groq_s:
-        groq_s.return_value.groq_api_key = "gsk_real_key"
-        groq_s.return_value.groq_model = "llama-3.3-70b-versatile"
+    with patch("providers.anthropic_provider.get_settings") as ant_s:
+        ant_s.return_value.anthropic_api_key = "sk-ant-real_key"
+        ant_s.return_value.anthropic_analysis_model = "claude-haiku-4-5-20251001"
 
         # Ollama is not reachable
         with patch("providers.ollama_provider.OllamaProvider.is_available", return_value=False), \
-             patch("providers.groq_provider.GroqProvider.is_available", return_value=True):
+             patch("providers.anthropic_provider.AnthropicProvider.is_available", return_value=True):
 
             from providers.factory import get_provider
             provider = get_provider("analysis")
             print(f"Provider selected: {provider.name}")
-            # groq/llama-3.3-70b-versatile ← fallback activated automatically
+            # anthropic/claude-haiku-4-5-20251001 ← fallback activated automatically
 ```
 
 ### 8b. All Providers Down → ProviderUnavailableError
@@ -687,23 +687,23 @@ from unittest.mock import patch
 
 with patch("providers.factory.get_settings") as mock_s:
     mock_s.return_value.llm_provider = "ollama"
-    mock_s.return_value.llm_fallback_provider = "groq"
+    mock_s.return_value.llm_fallback_provider = "anthropic"
     mock_s.return_value.analysis_model = "llama3.1:8b"
     mock_s.return_value.generation_model = "qwen2.5-coder:14b"
     mock_s.return_value.ollama_base_url = "http://localhost:11434"
     mock_s.return_value.ollama_timeout = 30
 
-    with patch("providers.groq_provider.get_settings") as groq_s:
-        groq_s.return_value.groq_api_key = "gsk_key"
-        groq_s.return_value.groq_model = "llama-3.3-70b-versatile"
+    with patch("providers.anthropic_provider.get_settings") as ant_s:
+        ant_s.return_value.anthropic_api_key = "sk-ant-key"
+        ant_s.return_value.anthropic_analysis_model = "claude-haiku-4-5-20251001"
 
         with patch("providers.ollama_provider.OllamaProvider.is_available", return_value=False), \
-             patch("providers.groq_provider.GroqProvider.is_available", return_value=False):
+             patch("providers.anthropic_provider.AnthropicProvider.is_available", return_value=False):
             try:
                 provider = get_provider("analysis")
             except ProviderUnavailableError as e:
                 print(f"Caught: {e}")
-                # "All LLM providers unavailable (tried: ['ollama', 'groq'])"
+                # "All LLM providers unavailable (tried: ['ollama', 'anthropic'])"
 ```
 
 ### 8c. LLM Returns Garbage → Safe Fallback

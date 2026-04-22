@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 _PROVIDER_UNAVAILABLE = {
     "root_cause": "No LLM provider is available.",
     "fix_suggestion": (
-        "Start Ollama (`ollama serve`) or set ANTHROPIC_API_KEY / GROQ_API_KEY in .env."
+        "Start Ollama (`ollama serve`) or set ANTHROPIC_API_KEY in .env."
     ),
     "confidence": 0.0,
     "fix_type": "diagnostic_only",

@@ -17,7 +17,7 @@ What the system does end to end:
 - Log cleaner strips ANSI, timestamps, noise
 - Verification crawler checks config against Jenkins/GitHub APIs
 - Context builder packs everything into ~850 tokens
-- LLM analyzes it (Ollama locally, or Anthropic/Groq via .env swap)
+- LLM analyzes it (Ollama locally, or Anthropic via .env swap)
 - Slack message with root cause, suggested fix, confidence %
 - Buttons: Apply Fix, Manual Review, Dismiss
 - Fix executor calls Jenkins API only after approval
@@ -27,7 +27,7 @@ Tool mismatches, missing credentials, IAM issues — those never get an "Apply F
 
 There's also a Copilot mode: `/devops generate jenkins python docker ecr` generates a Jenkinsfile from a base template, shows a 20-line preview in Slack, and commits to GitHub on approval.
 
-Runs fully locally on my M4 MacBook Air (32GB) with Ollama. Switch to Anthropic or Groq with one `.env` change, no code changes.
+Runs fully locally on my M4 MacBook Air (32GB) with Ollama. Switch to Anthropic with one `.env` change, no code changes.
 
 163 tests. 6 phases. 37 increments.
 

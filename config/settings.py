@@ -11,11 +11,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM routing
+    # LLM routing — providers: ollama | anthropic
     llm_provider: str = Field(default="ollama")
     analysis_model: str = Field(default="llama3.1:8b")
     generation_model: str = Field(default="qwen2.5-coder:14b")
-    llm_fallback_provider: str = Field(default="groq")
+    llm_fallback_provider: str = Field(default="anthropic")
     confidence_threshold: float = Field(default=0.75)
 
     # Ollama
@@ -27,14 +27,6 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="")
     anthropic_analysis_model: str = Field(default="claude-haiku-4-5-20251001")
     anthropic_generation_model: str = Field(default="claude-sonnet-4-6")
-
-    # Groq
-    groq_api_key: str = Field(default="")
-    groq_model: str = Field(default="llama-3.3-70b-versatile")
-
-    # Gemini
-    gemini_api_key: str = Field(default="")
-    gemini_model: str = Field(default="gemini-1.5-flash")
 
     # Jenkins
     jenkins_url: str = Field(default="http://localhost:8080")

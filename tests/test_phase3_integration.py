@@ -216,7 +216,7 @@ class TestProviderFallback:
         with patch("providers.factory._build_provider", side_effect=build_side_effect):
             with patch("providers.factory.get_settings") as mock_settings:
                 mock_settings.return_value.llm_provider = "ollama"
-                mock_settings.return_value.llm_fallback_provider = "groq"
+                mock_settings.return_value.llm_fallback_provider = "anthropic"
                 provider = get_provider("analysis")
 
         assert provider is fallback
@@ -228,7 +228,7 @@ class TestProviderFallback:
         with patch("providers.factory._build_provider", return_value=unavailable):
             with patch("providers.factory.get_settings") as mock_settings:
                 mock_settings.return_value.llm_provider = "ollama"
-                mock_settings.return_value.llm_fallback_provider = "groq"
+                mock_settings.return_value.llm_fallback_provider = "anthropic"
                 with pytest.raises(ProviderUnavailableError):
                     get_provider("analysis")
 

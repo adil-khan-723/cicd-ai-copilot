@@ -15,8 +15,6 @@ from unittest.mock import patch, MagicMock, PropertyMock
 from providers.factory import get_provider, ProviderUnavailableError, _build_provider
 from providers.ollama_provider import OllamaProvider
 from providers.anthropic_provider import AnthropicProvider
-from providers.groq_provider import GroqProvider
-from providers.gemini_provider import GeminiProvider
 
 
 # ---------------------------------------------------------------------------
@@ -124,96 +122,6 @@ class TestAnthropicProvider:
         mock_client.models.list.side_effect = Exception("network error")
         p._client = mock_client
         assert p.is_available() is False
-
-
-# ---------------------------------------------------------------------------
-# Groq provider
-# ---------------------------------------------------------------------------
-
-class TestGroqProvider:
-    def _make_provider(self, api_key="gsk_test"):
-        with patch("providers.groq_provider.get_settings") as mock_settings:
-            mock_settings.return_value.groq_api_key = api_key
-            mock_settings.return_value.groq_model = "llama-3.3-70b-versatile"
-            return GroqProvider()
-
-    def test_name_includes_model(self):
-        p = self._make_provider()
-        assert "groq" in p.name
-
-    def test_complete_returns_text(self):
-        p = self._make_provider()
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[0].message.content = "Groq result"
-        mock_client.chat.completions.create.return_value = mock_response
-        p._client = mock_client
-
-        result = p.complete("Analyze", system="Expert")
-        assert result == "Groq result"
-        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
-        assert messages[0]["role"] == "system"
-        assert messages[1]["role"] == "user"
-
-    def test_is_available_false_when_no_key(self):
-        p = self._make_provider(api_key="")
-        assert p.is_available() is False
-
-    def test_is_available_true_when_models_list_succeeds(self):
-        p = self._make_provider()
-        mock_client = MagicMock()
-        mock_client.models.list.return_value = []
-        p._client = mock_client
-        assert p.is_available() is True
-
-    def test_complete_raises_runtime_on_rate_limit(self):
-        from groq import RateLimitError
-        p = self._make_provider()
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = RateLimitError(
-            message="rate limit", response=MagicMock(status_code=429), body={}
-        )
-        p._client = mock_client
-        with pytest.raises(RuntimeError, match="rate limit"):
-            p.complete("test")
-
-
-# ---------------------------------------------------------------------------
-# Gemini provider
-# ---------------------------------------------------------------------------
-
-class TestGeminiProvider:
-    def _make_provider(self, api_key="AIza_test"):
-        with patch("providers.gemini_provider.get_settings") as mock_settings:
-            mock_settings.return_value.gemini_api_key = api_key
-            mock_settings.return_value.gemini_model = "gemini-1.5-flash"
-            return GeminiProvider()
-
-    def test_name_includes_model(self):
-        p = self._make_provider()
-        assert "gemini" in p.name
-
-    def test_complete_returns_text(self):
-        p = self._make_provider()
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Gemini result"
-        mock_client.models.generate_content.return_value = mock_response
-        p._client = mock_client
-
-        result = p.complete("Analyze", system="Expert")
-        assert result == "Gemini result"
-
-    def test_is_available_false_when_no_key(self):
-        p = self._make_provider(api_key="")
-        assert p.is_available() is False
-
-    def test_is_available_true_when_list_models_succeeds(self):
-        p = self._make_provider()
-        mock_client = MagicMock()
-        mock_client.models.list.return_value = iter([])
-        p._client = mock_client
-        assert p.is_available() is True
 
 
 # ---------------------------------------------------------------------------

@@ -58,7 +58,7 @@ The Slack message has two states. Initial: the failure details and log excerpt, 
 
 ## The architecture in one paragraph
 
-Webhook server (FastAPI) receives the failure event. Pipeline parser finds the failed stage. Log extractor pulls just that block. Log cleaner strips the noise. Verification crawler checks Jenkins/GitHub config against the API. Context builder packs everything into ~850 tokens. LLM analyzer calls whichever provider is configured (Ollama locally, or Anthropic/Groq/Gemini via `.env` swap). Response parser extracts JSON. Slack notifier posts the alert. Approval handler waits for a button click. Fix executor calls the Jenkins API. Audit log records the result.
+Webhook server (FastAPI) receives the failure event. Pipeline parser finds the failed stage. Log extractor pulls just that block. Log cleaner strips the noise. Verification crawler checks Jenkins/GitHub config against the API. Context builder packs everything into ~850 tokens. LLM analyzer calls whichever provider is configured (Ollama locally, or Anthropic via `.env` swap). Response parser extracts JSON. Slack notifier posts the alert. Approval handler waits for a button click. Fix executor calls the Jenkins API. Audit log records the result.
 
 No component knows about the others. The LLM is one node in the chain, not the coordinator.
 
@@ -96,7 +96,7 @@ The template selector tokenizes the request, scores each template against keywor
 
 **Response caching.** Same failure, same log, same verification result — hits the MD5 cache instead of calling the LLM again. I implemented it. I haven't seen it fire in practice because my failures aren't that repetitive.
 
-**The provider fallback chain.** I built it. Ollama → Groq on failure. In reality Ollama has never been down when I needed it, so the fallback is untested in production.
+**The provider fallback chain.** I built it. Ollama → Anthropic on failure. In reality Ollama has never been down when I needed it, so the fallback is untested in production.
 
 **Test coverage.** 163 tests. None of them require a live Jenkins, GitHub, Slack, or LLM. Everything is mocked. This made the whole thing buildable without any external accounts until late in the process.
 
@@ -109,7 +109,7 @@ The template selector tokenizes the request, scores each template against keywor
 - Token reduction: ~10,000 tokens → ~850 tokens per failure analysis
 - Test suite: 163 tests, 0 requiring live external services
 - LLM cost in testing: ~$0.015 total (Anthropic free credits)
-- Providers supported: Ollama (local), Anthropic, Groq, Gemini
+- Providers supported: Ollama (local), Anthropic
 
 ---
 
