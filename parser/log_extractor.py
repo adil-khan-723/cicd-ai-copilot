@@ -35,29 +35,33 @@ def _extract_jenkins_stage_block(log: str, failed_stage: str) -> str:
     block: list[str] = []
 
     for line in lines:
-        open_match = _STAGE_OPEN_RE.match(line.rstrip())
-        if open_match:
+        stripped = line.rstrip()
+        open_match = _STAGE_OPEN_RE.match(stripped)
+
+        if open_match and not in_stage:
+            # Only check for target stage when not already inside one
             stage_name = open_match.group(1).strip()
             if stage_name.lower() == failed_stage.lower():
                 in_stage = True
                 depth = 1
                 block = [line]
-                continue
-            elif in_stage and depth == 0:
-                break
+            continue  # stage-open lines are boundaries, never content
 
         if not in_stage:
             continue
 
-        if _STAGE_OPEN_RE.match(line.rstrip()):
+        if open_match:
+            # Nested stage open inside target stage
             depth += 1
-        elif _STAGE_CLOSE_RE.match(line.rstrip()):
+            block.append(line)
+        elif _STAGE_CLOSE_RE.match(stripped):
             depth -= 1
             if depth <= 0:
-                block.append(line)
+                # Closing brace of the target stage — stop (don't include it)
                 break
-
-        block.append(line)
+            block.append(line)
+        else:
+            block.append(line)
 
     if not block:
         return _tail(log, MAX_CHARS)
