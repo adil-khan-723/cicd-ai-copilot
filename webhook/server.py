@@ -4,7 +4,7 @@ import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
-from config import get_settings
+from config import get_settings, validate_config
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    validate_config(settings)
     logging.basicConfig(level=getattr(logging, settings.log_level))
     logger.info("Webhook server started on port %s", settings.webhook_port)
 
