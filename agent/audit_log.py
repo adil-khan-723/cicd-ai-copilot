@@ -6,7 +6,7 @@ Never logs secret values, credentials, or tokens.
 
 Fields logged per entry:
   timestamp, fix_type, job_name, build_number,
-  triggered_by (Slack user ID), result, confidence_at_trigger
+  triggered_by (user ID), result, confidence_at_trigger
 """
 import json
 import logging
@@ -30,7 +30,7 @@ def log_fix(
 
     Args:
         fix_type: The fix that was executed (or 'dismissed' / 'manual_review')
-        triggered_by: Slack user ID of the person who clicked the button
+        triggered_by: User ID of the person who triggered the fix
         job_name: Jenkins/GitHub Actions job name
         build_number: Build number (string or int)
         result: 'success' | 'failed' | 'dismissed' | 'acknowledged'

@@ -1,4 +1,4 @@
-.PHONY: install test run-webhook run-bot lint clean
+.PHONY: install test run-webhook lint clean
 
 install:
 	python3 -m venv .venv
@@ -13,9 +13,6 @@ test-cov:
 
 run-webhook:
 	.venv/bin/uvicorn webhook.server:app --reload --port 8000
-
-run-bot:
-	.venv/bin/python -m slack.bot
 
 lint:
 	.venv/bin/python -m py_compile providers/*.py parser/*.py || true

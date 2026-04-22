@@ -7,6 +7,3 @@ services:
     volumes:
       - audit_logs:/app/logs    # only logs volume, no source mount
 
-  slack-bot:
-    volumes:
-      - audit_logs:/app/logs

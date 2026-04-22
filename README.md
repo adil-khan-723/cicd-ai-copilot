@@ -1,6 +1,6 @@
 # DevOps AI Agent — CI/CD Copilot & Auto-Remediation System
 
-> An AI-powered DevOps agent that monitors CI/CD pipelines, analyzes failures using local or cloud LLMs, suggests fixes, executes remediations with human-in-the-loop approval via Slack, and acts as a copilot for generating pipelines and managing secrets — purely focused on CI/CD (Jenkins and GitHub Actions).
+> An AI-powered DevOps agent that monitors CI/CD pipelines, analyzes failures using local or cloud LLMs, suggests fixes, executes remediations with human-in-the-loop approval via the web UI, and acts as a copilot for generating pipelines and managing secrets — purely focused on CI/CD (Jenkins and GitHub Actions).
 
 ---
 
@@ -22,7 +22,7 @@
 - [Cost Analysis](#cost-analysis)
 - [Fix Capabilities](#fix-capabilities)
 - [Copilot Capabilities](#copilot-capabilities)
-- [Slack Interface](#slack-interface)
+- [Web UI Interface](#web-ui-interface)
 - [Security Design](#security-design)
 - [Configuration Reference](#configuration-reference)
 - [Build Phases & Timeline](#build-phases--timeline)
@@ -35,7 +35,7 @@
 This project is a production-grade AI DevOps agent built by Adil Khan as a portfolio and real-world tool.
 
 **What it solves:**
-Every DevOps team deals with CI/CD pipeline failures, misconfigured tools, wrong tool references in pipeline files, missing credentials, and repetitive infrastructure setup. This agent automates failure analysis, suggests precise fixes, executes remediations safely with human approval, and helps generate pipelines through natural language — all without leaving Slack.
+Every DevOps team deals with CI/CD pipeline failures, misconfigured tools, wrong tool references in pipeline files, missing credentials, and repetitive infrastructure setup. This agent automates failure analysis, suggests precise fixes, executes remediations safely with human approval, and helps generate pipelines through natural language — all through the web UI.
 
 **What makes it different from tutorials:**
 - Not a toy — solves real problems production teams face daily
@@ -57,7 +57,7 @@ Do NOT feed the entire pipeline log to the LLM. A pipeline with 8 stages where s
 Tool verification — is Maven configured? does the tool name in the Jenkinsfile match what Jenkins has? is the plugin installed? are credentials present? — is handled by a deterministic crawler agent, NOT the LLM. The LLM receives verified facts. This prevents hallucination on tool configuration questions entirely.
 
 ### 3. Human-in-the-Loop
-The agent NEVER executes fixes automatically. Every fix requires explicit manual approval via Slack buttons. This is intentional — AI should not have unchecked access to production infrastructure. This pattern is called Human-in-the-Loop and it is how production AI systems are built responsibly.
+The agent NEVER executes fixes automatically. Every fix requires explicit manual approval via web UI buttons. This is intentional — AI should not have unchecked access to production infrastructure. This pattern is called Human-in-the-Loop and it is how production AI systems are built responsibly.
 
 ### 4. Provider Agnostic
 No model is hardcoded anywhere. Every LLM call goes through a provider abstraction layer. Switching from Claude to Ollama to Groq requires only a .env change — zero code changes. This makes the project work completely free on local models.
@@ -100,19 +100,19 @@ Pipeline fails
 → Failed stage identified and isolated
 → Tool verification crawler runs in parallel with log cleaning
 → LLM analyzes merged context
-→ Slack notification with fix suggestion
+→ web UI notification with fix suggestion
 → Manual approval
 → Fix executed
-→ Result reported back to Slack
+→ Result reported back to web UI
 ```
 
 ### Mode 2 — Proactive (Copilot)
-Triggered by user commands in Slack or the optional web UI.
+Triggered by user commands in the web UI.
 
 ```
 User types natural language request
 → Agent generates Jenkinsfile or GitHub Actions YAML
-→ Preview shown in Slack
+→ Preview shown in web UI
 → User approves or requests changes
 → Committed to GitHub repo or applied to Jenkins via API
 ```
@@ -192,7 +192,7 @@ Stage 5:    FAIL ❌
 └──────────────────┬──────────────────────┘
                    ↓
 ┌─────────────────────────────────────────┐
-│           Slack Notifier                │
+│           Web UI Notifier               │
 │                                         │
 │  Formatted message with:                │
 │  - What failed                          │
@@ -217,7 +217,7 @@ Stage 5:    FAIL ❌
 │  → Decision logged to audit log         │
 │  → Fix Executor runs specific fix       │
 │  → Pipeline reruns                      │
-│  → Result reported back to Slack        │
+│  → Result reported back to web UI       │
 │                                         │
 │  If Rejected or Manual:                 │
 │  → Decision logged to audit log         │
@@ -235,8 +235,8 @@ Stage 5:    FAIL ❌
 ### Proactive Flow — Copilot
 
 ```
-User in Slack:
-"/devops generate jenkins python-docker-ecr"
+User in web UI:
+"generate jenkins python-docker-ecr"
          ↓
 Copilot Handler receives command
          ↓
@@ -247,14 +247,14 @@ Pipeline Generator:
   - LLM fills template intelligently
   - Returns complete Jenkinsfile or YAML
          ↓
-Slack preview with syntax highlighting
+Web UI preview with syntax highlighting
          ↓
 [✅ Commit to Repo] [✏️ Modify] [❌ Cancel]
          ↓
 If approved:
 → Repo Committer pushes to GitHub
 → OR Jenkins Configurator applies via API
-→ Confirmation sent to Slack with file path
+→ Confirmation shown in web UI with file path
 ```
 
 ---
@@ -295,7 +295,7 @@ Before sending logs to the LLM:
 Configured provider unavailable?
 → Try Ollama local
 → Ollama also unavailable?
-→ Post to Slack: manual review required
+→ Post to web UI: manual review required
 → Never silently fail
 → Always notify
 ```
@@ -407,7 +407,6 @@ Actions:
 | Cloud LLM | Claude API (Haiku 3.5 + Sonnet 4.5) |
 | Alternative LLM | Groq (free tier, 70B), Gemini (free tier) |
 | Language | Python 3.11+ |
-| Slack Integration | Slack Bolt SDK |
 | Webhook Server | FastAPI |
 | Jenkins API | python-jenkins |
 | GitHub API | PyGithub |
@@ -476,13 +475,6 @@ devops-ai-agent/
 │   ├── secrets_manager.py               # Writes secrets to Jenkins/GitHub securely
 │   ├── repo_committer.py                # Commits generated files to GitHub
 │   └── jenkins_configurator.py          # Applies config to Jenkins via API
-│
-├── slack/                               # Slack integration
-│   ├── __init__.py
-│   ├── notifier.py                      # Sends formatted failure/success messages
-│   ├── approval_handler.py              # Handles button click interactions
-│   ├── copilot_handler.py               # Handles /devops slash commands
-│   └── message_templates.py             # Slack Block Kit message templates
 │
 ├── webhook/                             # Receives pipeline failure events
 │   ├── __init__.py
@@ -568,7 +560,7 @@ MD5 hash of the combined context used as cache key. Same failure signature retur
 Maps failure diagnosis to specific fix action. Tool configuration mismatches, credential issues, and plugin problems are never auto-fixed — always produce an alert with precise diagnosis and require manual resolution.
 
 ### copilot/secrets_manager.py
-Accepts secret values from user via Slack DM only. Sends directly to Jenkins credentials API or GitHub secrets API. Never logs or stores raw values beyond the single API call. Only injects variable references into generated pipeline files.
+Accepts secret values from user via web UI only. Sends directly to Jenkins credentials API or GitHub secrets API. Never logs or stores raw values beyond the single API call. Only injects variable references into generated pipeline files.
 
 ---
 
@@ -588,7 +580,7 @@ Every task specifies provider and model via environment variables. The factory r
 Configured provider unavailable?
 → Try Ollama local
 → Ollama also unavailable?
-→ Slack notification: manual review required
+→ web UI notification: manual review required
 → Never silently fail
 ```
 
@@ -605,7 +597,7 @@ TASK_MODEL_MAP = {
     "clean_logs":               None,
     "crawl_tools":              None,
     "execute_fix":              None,
-    "format_slack":             None,
+    "format_notification":      None,
     "handle_approval":          None,
     "commit_to_repo":           None,
     "manage_secrets":           None,
@@ -755,17 +747,17 @@ The agent provides exact diagnosis — for example: "Jenkinsfile references 'Mav
 
 ## Copilot Capabilities
 
-### Slack Commands
+### Web UI Commands
 
 ```
-/devops generate jenkins python-docker-ecr
-/devops generate jenkins node-test-deploy
-/devops generate jenkins java-maven-ecr
-/devops generate actions python-test-ecr
-/devops generate actions node-staging-prod
-/devops add secret AWS_CREDENTIALS to pipeline
-/devops explain [paste Jenkinsfile or workflow YAML]
-/devops review [paste pipeline]
+generate jenkins python-docker-ecr
+generate jenkins node-test-deploy
+generate jenkins java-maven-ecr
+generate actions python-test-ecr
+generate actions node-staging-prod
+add secret AWS_CREDENTIALS to pipeline
+explain [paste Jenkinsfile or workflow YAML]
+review [paste pipeline]
 ```
 
 ### What Gets Generated
@@ -776,7 +768,7 @@ The agent provides exact diagnosis — for example: "Jenkinsfile references 'Mav
 - Deployment stages
 - Environment-specific variable injection
 - Shared library references
-- Error handling and Slack notifications on failure
+- Error handling and failure notifications
 
 **GitHub Actions Workflows (YAML):**
 - Full workflow with triggers
@@ -788,18 +780,18 @@ The agent provides exact diagnosis — for example: "Jenkinsfile references 'Mav
 
 ### Generation Process
 
-1. User sends natural language request via Slack
+1. User sends natural language request via web UI
 2. Agent loads relevant base template from templates/
 3. Template plus user request sent to Sonnet or Qwen2.5-Coder
 4. LLM fills template intelligently based on request
-5. Generated file previewed in Slack
+5. Generated file previewed in web UI
 6. User reviews and clicks Approve / Modify / Cancel
 7. On approval: committed to GitHub or applied to Jenkins via API
-8. Confirmation sent to Slack with file path and commit link
+8. Confirmation shown in web UI with file path and commit link
 
 ---
 
-## Slack Interface
+## Web UI Interface
 
 ### Failure notification — tool mismatch example
 
@@ -861,7 +853,7 @@ Add Jenkins user to docker group and restart.
 ## Security Design
 
 ### Secrets handling
-- Accepted only via Slack DM — never in public channels
+- Accepted only via web UI — never exposed in logs or shared channels
 - Sent directly to Jenkins credentials API or GitHub secrets API
 - Never stored in memory beyond the single API call
 - Never logged to console, files, or audit log
@@ -929,13 +921,6 @@ GITHUB_TOKEN=ghp_...
 GITHUB_REPO_OWNER=adil-khan-723
 GITHUB_DEFAULT_BRANCH=main
 
-# ── SLACK ────────────────────────────────────────────────
-
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_SIGNING_SECRET=...
-SLACK_ALERT_CHANNEL=#devops-alerts
-SLACK_COPILOT_CHANNEL=#devops-copilot
-
 # ── AWS ──────────────────────────────────────────────────
 
 AWS_DEFAULT_REGION=ap-south-1
@@ -967,10 +952,10 @@ AUDIT_LOG_PATH=./logs/audit.log
 - Log extractor pulls only failed stage logs
 - Log cleaner strips noise
 - Basic Ollama integration for free local testing
-- Slack notifier sends formatted message
+- Web UI notifier sends formatted message
 - No fix execution yet — observation only
 
-Milestone: Pipeline fails → clean analysis posted to Slack
+Milestone: Pipeline fails → clean analysis posted to web UI
 
 ### Phase 2 — Tool Verification Crawler (Week 2)
 - Jenkins crawler — parse Jenkinsfile tool references from tools{} block and sh steps
@@ -984,7 +969,7 @@ Milestone: Pipeline fails → clean analysis posted to Slack
 Milestone: Tool mismatches detected and reported precisely before LLM call
 
 ### Phase 3 — Approval Flow and Fix Execution (Week 3)
-- Slack Bolt approval handler
+- Web UI approval handler
 - Button interactions — Approve, Retry, Dismiss
 - Audit log implementation
 - Fix executor for pipeline-level fixes
@@ -992,17 +977,17 @@ Milestone: Tool mismatches detected and reported precisely before LLM call
 - Response caching layer
 - Fallback chain implementation
 
-Milestone: User approves fixes via Slack, agent executes and reports result
+Milestone: User approves fixes via web UI, agent executes and reports result
 
 ### Phase 4 — Copilot Mode (Week 4)
 - Pipeline generator for Jenkins Groovy
 - GitHub Actions YAML generator
 - Base templates for common patterns
-- Slack slash command handler
+- Web UI command handler
 - Repo committer via GitHub API
 - Jenkins configurator via API
 
-Milestone: Generate complete pipelines from natural language in Slack
+Milestone: Generate complete pipelines from natural language in web UI
 
 ### Phase 5 — Secrets Management and Polish (Week 5)
 - Secrets manager for Jenkins and GitHub
@@ -1028,7 +1013,7 @@ Milestone: Published, documented, live on GitHub
 
 ### Resume line
 
-Built an AI-powered CI/CD Copilot using local and cloud LLMs (Ollama/Llama 3.1, Qwen2.5-Coder 32B, Claude Haiku/Sonnet) with a deterministic tool-verification crawler that cross-checks Jenkins Global Tool Configuration and GitHub Actions secrets against pipeline definitions before LLM analysis — achieving 90% token reduction through selective context feeding, human-in-the-loop approval via Slack, automated fix execution, and a Copilot mode for generating Jenkinsfiles and GitHub Actions workflows from natural language.
+Built an AI-powered CI/CD Copilot using local and cloud LLMs (Ollama/Llama 3.1, Qwen2.5-Coder 32B, Claude Haiku/Sonnet) with a deterministic tool-verification crawler that cross-checks Jenkins Global Tool Configuration and GitHub Actions secrets against pipeline definitions before LLM analysis — achieving 90% token reduction through selective context feeding, human-in-the-loop approval via web UI, automated fix execution, and a Copilot mode for generating Jenkinsfiles and GitHub Actions workflows from natural language.
 
 ### Key interview talking points
 
@@ -1039,7 +1024,7 @@ Instead of feeding the entire pipeline log to the LLM, I parse the result first 
 One of the most common CI/CD failures is a tool name mismatch — the Jenkinsfile references a tool name that does not exactly match what is configured in Jenkins Global Tool Configuration. My crawler detects this deterministically before calling the LLM by parsing the Jenkinsfile, querying the Jenkins API, and running exact plus fuzzy match comparison. The LLM receives verified facts instead of guessing from confusing error messages. This eliminates an entire category of hallucination.
 
 **On human-in-the-loop:**
-The agent never executes anything automatically. Every fix requires explicit approval in Slack. Tool configuration issues, credential problems, and plugin issues never get an auto-fix button at all — always manual resolution. This is how production AI systems are designed responsibly.
+The agent never executes anything automatically. Every fix requires explicit approval in the web UI. Tool configuration issues, credential problems, and plugin issues never get an auto-fix button at all — always manual resolution. This is how production AI systems are designed responsibly.
 
 **On the provider abstraction:**
 No model is hardcoded anywhere. The entire system switches from Claude to locally running Llama or Qwen with one environment variable change. The task code never knows which provider it is talking to. On my M4 MacBook with 32GB I can run Qwen2.5-Coder 32B locally for free for all generation tasks.

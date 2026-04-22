@@ -30,7 +30,7 @@ pytest --version   # should print pytest 9.x
 cp .env.example .env
 ```
 
-Minimum viable `.env` for local simulation (no Ollama, no live Jenkins/Slack):
+Minimum viable `.env` for local simulation (no Ollama, no live Jenkins):
 
 ```
 LLM_PROVIDER=anthropic
@@ -38,10 +38,6 @@ ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_ANALYSIS_MODEL=claude-haiku-4-5-20251001
 ANTHROPIC_GENERATION_MODEL=claude-sonnet-4-6
 CONFIDENCE_THRESHOLD=0.75
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_APP_TOKEN=xapp-...
-SLACK_SIGNING_SECRET=...
-SLACK_CHANNEL=#devops-alerts
 JENKINS_URL=http://localhost:8080
 JENKINS_USER=admin
 JENKINS_TOKEN=
@@ -352,91 +348,22 @@ print(list_templates("github"))    # ['python-ci', 'docker-ecr', 'generic']
 
 ---
 
-## 3. Slack Message Rendering (Visual Check, No Live Slack)
+## 3. Webhook Server Simulation
 
-```python
-from parser.models import FailureContext
-from verification.models import VerificationReport, ToolMismatch
-from slack.message_templates import failure_alert_blocks, analysis_complete_blocks
-import json
-
-ctx = FailureContext(
-    job_name="build-api",
-    build_number=42,
-    failed_stage="Docker Build",
-    platform="jenkins",
-    raw_log="",
-    branch="main",
-)
-
-report = VerificationReport(platform="jenkins")
-report.mismatches.append(ToolMismatch(
-    tool_type="maven",
-    referenced_name="Maven3",
-    configured_name="Maven-3",
-    match_score=0.91,
-))
-
-# Step 1: Initial message (analysis pending)
-blocks = failure_alert_blocks(ctx, "ERROR: Cannot connect to Docker daemon", report=report)
-print(json.dumps(blocks, indent=2))
-# Look for: header, divider, verification section with :x: mismatch, log preview, "Analysis pending..."
-
-# Step 2: After LLM completes — update message with buttons
-analysis = {
-    "root_cause": "Docker daemon not running on build node",
-    "fix_suggestion": "Retry pipeline — daemon auto-starts on next build trigger",
-    "confidence": 0.88,
-    "fix_type": "retry",
-}
-updated = analysis_complete_blocks(blocks, analysis, confidence_threshold=0.75)
-print(json.dumps(updated, indent=2))
-# Look for: analysis section, "Apply Fix (Retry)" button + "Dismiss" button
-
-# Step 3: Low confidence → no Apply Fix button
-low_conf_analysis = {
-    "root_cause": "Possible race condition",
-    "fix_suggestion": "Investigate build logs",
-    "confidence": 0.45,
-    "fix_type": "diagnostic_only",
-}
-updated_low = analysis_complete_blocks(blocks, low_conf_analysis)
-# Look for: "Manual Review" button only — no "Apply Fix"
-actions = [b for b in updated_low if b.get("type") == "actions"]
-print(actions[0]["elements"][0]["text"]["text"])   # "Manual Review"
-
-# Step 4: diagnostic_only with HIGH confidence — still no Apply Fix button
-diag_analysis = {
-    "root_cause": "Missing Jenkins credential: ECR_CREDENTIALS",
-    "fix_suggestion": "Add credential in Jenkins Credentials Manager",
-    "confidence": 0.95,
-    "fix_type": "diagnostic_only",
-}
-updated_diag = analysis_complete_blocks(blocks, diag_analysis)
-actions = [b for b in updated_diag if b.get("type") == "actions"]
-print(actions[0]["elements"][0]["text"]["text"])   # "Manual Review" — NEVER "Apply Fix"
-```
-
-**Key invariant:** `diagnostic_only` never shows "Apply Fix" regardless of confidence.
-
----
-
-## 4. Webhook Server Simulation
-
-### 4a. Start the Server
+### 3a. Start the Server
 
 ```bash
 .venv/bin/uvicorn webhook.server:app --reload --port 8000
 ```
 
-### 4b. Health Check
+### 3b. Health Check
 
 ```bash
 curl http://localhost:8000/health
 # {"status":"ok"}
 ```
 
-### 4c. Jenkins Failure Webhook
+### 3c. Jenkins Failure Webhook
 
 ```bash
 curl -X POST http://localhost:8000/webhook/pipeline-failure \
@@ -453,7 +380,7 @@ curl -X POST http://localhost:8000/webhook/pipeline-failure \
 # {"status":"received","source":"jenkins"}
 ```
 
-### 4d. GitHub Actions Failure Webhook
+### 3d. GitHub Actions Failure Webhook
 
 ```bash
 curl -X POST http://localhost:8000/webhook/pipeline-failure \
@@ -473,7 +400,7 @@ curl -X POST http://localhost:8000/webhook/pipeline-failure \
 # {"status":"received","source":"github"}
 ```
 
-### 4e. Unknown Source (No Signature Headers)
+### 3e. Unknown Source (No Signature Headers)
 
 ```bash
 curl -X POST http://localhost:8000/webhook/pipeline-failure \
@@ -484,7 +411,7 @@ curl -X POST http://localhost:8000/webhook/pipeline-failure \
 
 ---
 
-## 5. Jenkins Verification Crawler Simulation
+## 4. Jenkins Verification Crawler Simulation
 
 ```python
 import respx, httpx
@@ -543,7 +470,7 @@ print(report.summary_lines())
 
 ---
 
-## 6. GitHub Actions Verification Crawler Simulation
+## 5. GitHub Actions Verification Crawler Simulation
 
 ```python
 import respx, httpx
@@ -586,9 +513,9 @@ print(report.summary_lines())
 
 ---
 
-## 7. Full Reactive Pipeline Simulation (End-to-End, All Mocked)
+## 6. Full Reactive Pipeline Simulation (End-to-End, All Mocked)
 
-This simulates the complete failure → analysis → Slack message flow without any live services.
+This simulates the complete failure → analysis → web UI message flow without any live services.
 
 ```python
 import json
@@ -597,7 +524,7 @@ from parser.pipeline_parser import parse_failure
 from parser.log_extractor import extract_failed_logs
 from parser.log_cleaner import clean_log
 from analyzer.context_builder import build_context
-from slack.message_templates import failure_alert_blocks, analysis_complete_blocks
+from web_ui.message_templates import failure_alert_blocks, analysis_complete_blocks
 
 # --- Step 1: Receive Jenkins failure ---
 payload = {
@@ -632,13 +559,13 @@ from analyzer.response_parser import parse_analysis_response
 analysis = parse_analysis_response(mock_raw)
 print(f"[5] Analysis: {analysis['root_cause']} (confidence={analysis['confidence']}, fix={analysis['fix_type']})")
 
-# --- Step 6: Build Slack blocks ---
+# --- Step 6: Build web UI notification blocks ---
 blocks = failure_alert_blocks(ctx, cleaned, report=report, analysis=analysis)
 updated_blocks = analysis_complete_blocks(blocks, analysis, confidence_threshold=0.75)
 
 # Find the actions block
 actions = [b for b in updated_blocks if b.get("type") == "actions"]
-print(f"[6] Slack buttons: {[e['text']['text'] for e in actions[0]['elements']]}")
+print(f"[6] Web UI buttons: {[e['text']['text'] for e in actions[0]['elements']]}")
 # ['Apply Fix (Retry)', 'Dismiss']
 
 # --- Step 7: User clicks Apply Fix → execute fix (mocked Jenkins) ---
@@ -669,7 +596,7 @@ print("\n✓ Full reactive pipeline simulation complete.")
 
 ---
 
-## 8. Copilot Mode Simulation
+## 7. Copilot Mode Simulation
 
 ```python
 from unittest.mock import patch, MagicMock
@@ -722,9 +649,9 @@ print("\n✓ Copilot mode simulation complete.")
 
 ---
 
-## 9. Failure Injection — How the System Behaves When Things Go Wrong
+## 8. Failure Injection — How the System Behaves When Things Go Wrong
 
-### 9a. Ollama Down → Fallback to Groq
+### 8a. Ollama Down → Fallback to Groq
 
 ```python
 import respx, httpx
@@ -752,7 +679,7 @@ with patch("providers.factory.get_settings") as mock_s:
             # groq/llama-3.3-70b-versatile ← fallback activated automatically
 ```
 
-### 9b. All Providers Down → ProviderUnavailableError
+### 8b. All Providers Down → ProviderUnavailableError
 
 ```python
 from providers.factory import get_provider, ProviderUnavailableError
@@ -779,7 +706,7 @@ with patch("providers.factory.get_settings") as mock_s:
                 # "All LLM providers unavailable (tried: ['ollama', 'groq'])"
 ```
 
-### 9c. LLM Returns Garbage → Safe Fallback
+### 8c. LLM Returns Garbage → Safe Fallback
 
 ```python
 from analyzer.response_parser import parse_analysis_response
@@ -801,7 +728,7 @@ for bad in bad_outputs:
 print("\n✓ All garbage inputs safely fallback to diagnostic_only")
 ```
 
-### 9d. GitHub API Returns 403 (No Secret Read Permission)
+### 8d. GitHub API Returns 403 (No Secret Read Permission)
 
 ```python
 import respx, httpx
@@ -837,7 +764,7 @@ print(f"errors: {report.errors}")           # [] — not an error, just skipped
 print("✓ 403 handled gracefully — no false positives")
 ```
 
-### 9e. Jenkins Unreachable → Verification Error, Pipeline Continues
+### 8e. Jenkins Unreachable → Verification Error, Pipeline Continues
 
 ```python
 import respx, httpx
@@ -857,7 +784,7 @@ print(f"has_issues: {report.has_issues}")   # True (errors count as issues)
 print("✓ Jenkins unreachable → error flagged, pipeline analysis continues")
 ```
 
-### 9f. Webhook With No Matching Stage in Log
+### 8f. Webhook With No Matching Stage in Log
 
 ```python
 from parser.pipeline_parser import parse_failure
@@ -877,7 +804,7 @@ extracted = extract_failed_logs(ctx)
 print(f"extracted ({len(extracted)} chars)")   # returns tail of log — always returns something
 ```
 
-### 9g. Tool Name Mismatch — Fuzzy Match
+### 8g. Tool Name Mismatch — Fuzzy Match
 
 ```python
 import respx, httpx
@@ -907,7 +834,7 @@ print(f"Mismatch: '{mismatch.referenced_name}' → closest: '{mismatch.configure
 print("✓ Fuzzy match caught near-miss tool name — LLM given a fact, not a log to guess from")
 ```
 
-### 9h. Cache Hit on Repeated Failure
+### 8h. Cache Hit on Repeated Failure
 
 ```python
 from analyzer.cache import get, set as cache_set, clear
@@ -940,7 +867,7 @@ print("✓ TTL expired → cache miss → fresh LLM call")
 
 ---
 
-## 10. Run Full Test Suite + Coverage Report
+## 9. Run Full Test Suite + Coverage Report
 
 ```bash
 .venv/bin/pytest tests/ -v --tb=short 2>&1 | tee simulation-test-output.txt
@@ -951,42 +878,41 @@ print("✓ TTL expired → cache miss → fresh LLM call")
 Expected:
 - **163 passed**
 - **84% overall coverage**
-- 0% on `slack/bot.py`, `slack/approval_handler.py`, `webhook/server.py` — these require live Slack/HTTP connections, not testable without real services
+- 0% on `web_ui/approval_handler.py`, `web_ui/copilot_handler.py`, `webhook/server.py` — these require live web UI sessions or HTTP connections, not testable without real services
 
 ---
 
-## 11. What Each Coverage Gap Means
+## 10. What Each Coverage Gap Means
 
 | File | Coverage | Why 0% is OK |
 |---|---|---|
-| `slack/bot.py` | 0% | Slack Bolt event loop — runs live, no test equivalent |
-| `slack/approval_handler.py` | 0% | Button click handlers — require live Socket Mode |
-| `slack/copilot_handler.py` | 0% | Slash command handlers — require live Slack |
-| `webhook/server.py` | 0% | FastAPI server — tested via curl in section 4 |
+| `web_ui/approval_handler.py` | 0% | Button click handlers — require live web UI session |
+| `web_ui/copilot_handler.py` | 0% | Command handlers — require live web UI session |
+| `webhook/server.py` | 0% | FastAPI server — tested via curl in section 3 |
 | `webhook/validators.py` | 0% | HMAC validation — tested via live curl |
-| `copilot/secrets_manager.py` | 42% | DM flow — requires live Slack DM channel |
-| `slack/notifier.py` | 58% | Live `client.chat_postMessage` calls |
+| `copilot/secrets_manager.py` | 42% | Secrets input flow — requires live web UI session |
+| `web_ui/notifier.py` | 58% | Live notification dispatch calls |
 | `agent/pipeline_fixes.py` | 64% | Live Jenkins API calls — tested via mock in executor |
 
 All critical logic paths (parsing, verification, analysis, audit, caching, fallback) are covered.
 
 ---
 
-## 12. Live Run Checklist (When You Have Real Services)
+## 11. Live Run Checklist (When You Have Real Services)
 
-When Slack, Jenkins, and an LLM are all live:
+When Jenkins, web UI, and an LLM are all live:
 
 ```
 [ ] uvicorn webhook.server:app --reload --port 8000
-[ ] .venv/bin/python -m slack.bot  (in a separate terminal)
-[ ] Send Jenkins failure webhook (section 4c)
-[ ] Watch #devops-alerts in Slack — alert should appear within 5s
-[ ] Watch DEBUG logs — see: parse → extract → clean → verify → context → LLM → Slack
+[ ] python -m web_ui.app  (in a separate terminal)
+[ ] Send Jenkins failure webhook (section 3c)
+[ ] Watch web UI notification panel — alert should appear within 5s
+[ ] Watch DEBUG logs — see: parse → extract → clean → verify → context → LLM → web UI
 [ ] Click "Apply Fix" — watch audit.log for new entry
 [ ] Send same webhook again — watch cache hit in DEBUG logs (no LLM call made)
 [ ] Kill Ollama (if local) — watch fallback provider activate in logs
 [ ] Kill all providers — watch ProviderUnavailableError → "Manual Review" button only
-[ ] Send /devops generate jenkins python docker ecr in Slack
+[ ] Submit "generate jenkins python docker ecr" in web UI
 [ ] Click "Approve & Commit" — verify file appears in GitHub repo
 ```
 

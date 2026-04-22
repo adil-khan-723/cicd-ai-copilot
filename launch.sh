@@ -118,9 +118,6 @@ else warn "JENKINS_URL not set — configure via Settings in the UI"; fi
 if [ -n "${GITHUB_TOKEN:-}" ]; then ok "GitHub token set"
 else warn "GITHUB_TOKEN not set — Copilot mode disabled"; fi
 
-if [ -n "${SLACK_BOT_TOKEN:-}" ]; then ok "Slack token set"
-else warn "SLACK_BOT_TOKEN not set — Slack alerts disabled"; fi
-
 # ── 5. Port check ──────────────────────────────────────────────────────────
 hdr "[ 5 / 6 ]  Port $PORT"
 if lsof -ti tcp:"$PORT" &>/dev/null; then

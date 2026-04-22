@@ -5,22 +5,22 @@ AWS Cloud Intern @ F13 Technology (active)
 
 ## Primary Project: DevOps AI Agent — CI/CD Copilot & Auto-Remediation System
 
-An AI-powered agent that monitors CI/CD pipelines (Jenkins + GitHub Actions), analyzes failures using local or cloud LLMs, suggests fixes, executes remediations with human-in-the-loop approval via Slack, and generates pipelines from natural language.
+An AI-powered agent that monitors CI/CD pipelines (Jenkins + GitHub Actions), analyzes failures using local or cloud LLMs, suggests fixes, executes remediations with human-in-the-loop approval via the web UI, and generates pipelines from natural language.
 
 **Scope:** Strictly CI/CD — Jenkins and GitHub Actions only. Kubernetes, cluster monitoring, and APM are explicitly out of scope (separate project).
 
 ### Core Design Principles
 1. **Selective context feeding** — Only failed stage logs sent to LLM (~850 tokens vs 10,000+, 90% reduction)
 2. **Deterministic before LLM** — Tool verification via API crawlers, LLM receives facts not raw logs
-3. **Human-in-the-loop always** — No fix executes without Slack button approval
+3. **Human-in-the-loop always** — No fix executes without web UI approval
 4. **Provider agnostic** — All LLM calls via abstraction layer, swap models via `.env`
 
 ### Two Operating Modes
-- **Reactive** — Pipeline fails → webhook → analyze → Slack alert with approve/reject
-- **Proactive (Copilot)** — Slack command → generate Jenkinsfile or GH Actions YAML → preview → approve → commit
+- **Reactive** — Pipeline fails → webhook → analyze → web UI alert with approve/reject
+- **Proactive (Copilot)** — Web UI command → generate Jenkinsfile or GH Actions YAML → preview → approve → commit
 
 ### Tech Stack
-- Python 3.11+, FastAPI (webhook server), Slack Bolt SDK
+- Python 3.11+, FastAPI (webhook server), React web UI
 - LLMs: Claude Haiku/Sonnet (Anthropic), Ollama (Llama 3.1 8B, Qwen2.5-Coder 32B, Mistral 7B), Groq, Gemini
 - Jenkins API (python-jenkins), GitHub API (PyGithub)
 - Docker + Docker Compose, Redis (optional cache)
@@ -44,7 +44,7 @@ An AI-powered agent that monitors CI/CD pipelines (Jenkins + GitHub Actions), an
 - Response caching by MD5 hash of context
 
 ## Resume Line
-"Built an AI-powered CI/CD Copilot using local and cloud LLMs (Ollama/Llama 3.1, Qwen2.5-Coder 32B, Claude Haiku/Sonnet) with a deterministic tool-verification crawler that cross-checks Jenkins Global Tool Configuration and GitHub Actions secrets against pipeline definitions before LLM analysis — achieving 90% token reduction through selective context feeding, human-in-the-loop approval via Slack, automated fix execution, and a Copilot mode for generating Jenkinsfiles and GitHub Actions workflows from natural language."
+"Built an AI-powered CI/CD Copilot using local and cloud LLMs (Ollama/Llama 3.1, Qwen2.5-Coder 32B, Claude Haiku/Sonnet) with a deterministic tool-verification crawler that cross-checks Jenkins Global Tool Configuration and GitHub Actions secrets against pipeline definitions before LLM analysis — achieving 90% token reduction through selective context feeding, human-in-the-loop approval via web UI, automated fix execution, and a Copilot mode for generating Jenkinsfiles and GitHub Actions workflows from natural language."
 
 ## Publication Plan
 - Dev.to article: "Building a Human-in-the-Loop AI Agent for CI/CD Failure Recovery"

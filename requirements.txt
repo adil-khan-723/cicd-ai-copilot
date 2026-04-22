@@ -2,10 +2,6 @@
 fastapi==0.115.6
 uvicorn[standard]==0.44.0
 
-# Slack
-slack-bolt==1.21.3
-slack-sdk==3.33.5
-
 # LLM providers
 anthropic>=0.96.0
 groq==0.13.1

@@ -37,7 +37,7 @@ When you need to accomplish something, read the relevant workflow in `workflows/
 
 ## Architecture Reference
 
-Full architecture, component breakdown, model routing, `.env.example`, and Slack interface specs are in `README.md`. That file is the source of truth — use it rather than asking Adil to re-explain.
+Full architecture, component breakdown, model routing, `.env.example`, and interface specs are in `README.md`. That file is the source of truth — use it rather than asking Adil to re-explain.
 
 ### Quick module map
 | Module | What it does | Uses LLM? |
@@ -48,15 +48,14 @@ Full architecture, component breakdown, model routing, `.env.example`, and Slack
 | `providers/` | LLM abstraction layer + fallback chain | — |
 | `agent/` | Map failure → fix, confidence check, execute, audit log | No |
 | `copilot/` | Generate pipelines from templates + NL, commit to GitHub | Yes |
-| `slack/` | Format Block Kit messages, handle buttons, serve `/devops` commands | No |
 | `webhook/` | FastAPI server receiving pipeline failure events | No |
 
 ### Critical rules
 - Failed stage only goes to LLM — passing stage logs are discarded immediately
 - Tool verification always runs before LLM analysis
-- No fix executes without Slack approval
+- No fix executes without web UI approval
 - Tool name mismatches, missing credentials, missing plugins → diagnostic alert only, never auto-fixed
-- Secrets: Slack DM only, direct to API, never logged
+- Secrets: web UI only, direct to API, never logged
 
 ---
 
@@ -74,7 +73,7 @@ pytest tests/test_parser.py      # single file
 
 ## File Conventions
 
-- **Deliverables** → cloud services (GitHub, Jenkins, Slack, Google Sheets)
+- **Deliverables** → cloud services (GitHub, Jenkins, Google Sheets)
 - **Intermediates** → `.tmp/` (disposable, regenerated)
 - **Secrets** → `.env` only, never anywhere else
 

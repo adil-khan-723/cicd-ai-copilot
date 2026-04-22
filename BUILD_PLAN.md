@@ -26,7 +26,7 @@ Never skip verification steps — they catch issues before they compound.
 - `.env.example` with every variable documented
 - `.gitignore` (Python, `.env`, `.tmp/`, `__pycache__`, models)
 - `docker-compose.yml` stub (fills out in Phase 5)
-- All module directories created with empty `__init__.py`: `providers/`, `parser/`, `verification/`, `analyzer/`, `agent/`, `copilot/`, `slack/`, `webhook/`, `config/`, `templates/`, `tests/`
+- All module directories created with empty `__init__.py`: `providers/`, `parser/`, `verification/`, `analyzer/`, `agent/`, `copilot/`, `web_ui/`, `webhook/`, `config/`, `templates/`, `tests/`
 
 **Verify:** `python -m pytest tests/` exits 0 (no tests yet, just confirms structure)
 
@@ -92,29 +92,15 @@ Returns a real response from Ollama
 
 ---
 
-### Increment 5 — Slack App Setup (From Scratch)
-**What:** Create Slack workspace + app, configure all required permissions  
+### Increment 5 — Web UI Setup
+**What:** Configure the web UI for local development  
 **Steps (runbook):**
-1. Create Slack workspace at slack.com (or use existing)
-2. Go to api.slack.com/apps → Create New App → From Manifest
-3. App manifest config:
-   - Bot scopes: `chat:write`, `chat:write.public`, `commands`, `im:write`
-   - Event subscriptions: enable (URL set later when webhook runs)
-   - Slash commands: `/devops` (URL set in Phase 4)
-   - Socket Mode: enable for local dev (avoids ngrok requirement)
-4. Install app to workspace
-5. Copy tokens to `.env`:
-   ```
-   SLACK_BOT_TOKEN=xoxb-...
-   SLACK_APP_TOKEN=xapp-...   # for Socket Mode
-   SLACK_SIGNING_SECRET=...
-   SLACK_CHANNEL=#devops-alerts
-   ```
-6. Invite bot to `#devops-alerts` channel
+1. Confirm `web_ui/` directory exists with `app.py` and templates
+2. Start Flask app: `python -m web_ui.app`
+3. Open browser at `http://localhost:5000`
+4. Verify notification panel and approval buttons render
 
-**Verify:** `curl -H "Authorization: Bearer $SLACK_BOT_TOKEN" https://slack.com/api/auth.test` returns `"ok": true`
-
-**Runbook saved to:** `docs/setup/slack-setup.md`
+**Verify:** Web UI loads at `http://localhost:5000` without errors
 
 ---
 
@@ -184,11 +170,11 @@ Returns `{"status": "received"}`
 
 ---
 
-### Increment 10 — Basic Slack Notifier
-**What:** Posts a formatted failure alert to Slack (no buttons yet, no LLM yet)  
+### Increment 10 — Basic Web UI Notifier
+**What:** Posts a formatted failure alert to the web UI (no buttons yet, no LLM yet)  
 **Files:**
-- `slack/notifier.py` — `send_failure_alert(context: FailureContext, cleaned_log: str)`
-- `slack/message_templates.py` — Block Kit JSON builder for failure message
+- `web_ui/notifier.py` — `send_failure_alert(context: FailureContext, cleaned_log: str)`
+- `web_ui/message_templates.py` — HTML/JSON builder for failure message
 
 **Message format:**
 ```
@@ -198,19 +184,19 @@ Stage: Docker Build
 Analysis pending...
 ```
 
-**Verify:** Trigger with test payload → message appears in `#devops-alerts`
+**Verify:** Trigger with test payload → message appears in web UI notification panel
 
 ---
 
 ### Increment 11 — Phase 1 Integration Test
 **What:** Wire everything together end-to-end, no LLM yet  
-**Full flow:** Webhook receives event → parse → extract logs → clean → Slack message  
+**Full flow:** Webhook receives event → parse → extract logs → clean → web UI message  
 
 **Files:**
-- `tests/test_phase1_integration.py` — sends test webhook, asserts Slack message sent (mock Slack API)
+- `tests/test_phase1_integration.py` — sends test webhook, asserts web UI notification sent (mocked)
 
 **Verify:** `pytest tests/test_phase1_integration.py -v` passes  
-**Milestone achieved:** Pipeline fails → clean alert in Slack ✓
+**Milestone achieved:** Pipeline fails → clean alert in web UI ✓
 
 ---
 
@@ -288,9 +274,9 @@ Analysis pending...
 
 ---
 
-### Increment 16 — Enhanced Slack Notification with Analysis
+### Increment 16 — Enhanced Web UI Notification with Analysis
 **What:** Update notifier to include verification results + LLM analysis  
-**Files:** Update `slack/notifier.py` + `slack/message_templates.py`
+**Files:** Update `web_ui/notifier.py` + `web_ui/message_templates.py`
 
 **Message format:**
 ```
@@ -308,24 +294,24 @@ Stage: Docker Build
 [buttons appear in next increment]
 ```
 
-**Verify:** Full message renders correctly in Slack with all sections
+**Verify:** Full message renders correctly in web UI with all sections
 
 ---
 
 ## PHASE 3: Approval Flow & Fix Execution
 
-### Increment 17 — Slack Approval Handler (Bolt SDK)
+### Increment 17 — Web UI Approval Handler
 **What:** Handle button clicks — Approve / Retry / Dismiss  
 **Files:**
-- `slack/approval_handler.py` — Slack Bolt action handlers
-- Update `slack/message_templates.py` — add buttons based on confidence threshold
+- `web_ui/approval_handler.py` — web UI action handlers
+- Update `web_ui/message_templates.py` — add buttons based on confidence threshold
 
 **Button logic:**
 - Confidence ≥ 0.75 → show [Apply Fix] + [Dismiss]
 - Confidence < 0.75 → show [Manual Review] + [Dismiss]
 - Diagnostic-only fix types → no [Apply Fix] button, ever
 
-**Verify:** Click [Apply Fix] in Slack → handler logs "fix approved" + updates message to "Processing..."
+**Verify:** Click [Apply Fix] in web UI → handler logs "fix approved" + updates message to "Processing..."
 
 ---
 
@@ -353,7 +339,7 @@ Stage: Docker Build
 - `agent/audit_log.py` — `log_fix(fix_type, triggered_by, job, result, timestamp)`
 
 **Format:** JSONL (one JSON object per line, append-only)  
-**Fields:** timestamp, fix_type, job_name, build_number, triggered_by (Slack user), result (success/failed), confidence_at_trigger  
+**Fields:** timestamp, fix_type, job_name, build_number, triggered_by (web UI user), result (success/failed), confidence_at_trigger  
 **Never logged:** secret values, credentials, tokens
 
 **Verify:** Execute a fix → `audit.log` has correct entry → second fix appends (not overwrites)
@@ -369,20 +355,20 @@ Stage: Docker Build
 **Fallback order (from `.env` config):**
 1. Configured primary provider (e.g., `ollama`)
 2. If unavailable → try secondary (e.g., `groq`)
-3. If all fail → send Slack alert: "LLM unavailable, manual review required"
+3. If all fail → send web UI alert: "LLM unavailable, manual review required"
 
 **Verify:** 
 - Same log twice → second call returns from cache (no Ollama API call made)
-- Kill Ollama → fallback triggers → Slack alert sent
+- Kill Ollama → fallback triggers → web UI alert sent
 
 ---
 
 ### Increment 21 — Phase 3 Integration Test
 **What:** Full reactive flow end-to-end test  
-**Flow:** Webhook → parse → extract → clean → verify → build context → LLM → Slack alert → button click → execute fix → audit log entry  
+**Flow:** Webhook → parse → extract → clean → verify → build context → LLM → web UI alert → button click → execute fix → audit log entry  
 
 **Verify:** `pytest tests/test_phase3_integration.py -v` passes  
-**Milestone achieved:** Approve fix via Slack → agent executes → reports result ✓
+**Milestone achieved:** Approve fix via web UI → agent executes → reports result ✓
 
 ---
 
@@ -414,7 +400,7 @@ Stage: Docker Build
 4. Parse LLM output → validate it's valid Groovy (basic syntax check)
 5. Return generated Jenkinsfile string
 
-**Verify:** `generate_jenkinsfile("Python app, Docker build, push to ECR, Slack notification")` → valid Jenkinsfile
+**Verify:** `generate_jenkinsfile("Python app, Docker build, push to ECR")` → valid Jenkinsfile
 
 ---
 
@@ -430,27 +416,27 @@ Stage: Docker Build
 
 ---
 
-### Increment 25 — Slack Slash Command Handler
-**What:** `/devops generate <type> <description>` Slack command  
+### Increment 25 — Web UI Command Handler
+**What:** `generate <type> <description>` web UI command  
 **Files:**
-- `slack/copilot_handler.py` — handles `/devops` command via Slack Bolt
+- `web_ui/copilot_handler.py` — handles generate commands from web UI
 
 **Commands:**
-- `/devops generate jenkins <description>` → Jenkins pipeline
-- `/devops generate github <description>` → GitHub Actions workflow
-- `/devops generate jenkins list` → show available templates
+- `generate jenkins <description>` → Jenkins pipeline
+- `generate github <description>` → GitHub Actions workflow
+- `generate jenkins list` → show available templates
 
-**Flow:** Command received → ephemeral "Generating..." message → call generator → post preview
+**Flow:** Command received → "Generating..." indicator → call generator → post preview
 
-**Verify:** `/devops generate jenkins python docker ecr` in Slack → pipeline preview posted
+**Verify:** `generate jenkins python docker ecr` in web UI → pipeline preview posted
 
 ---
 
 ### Increment 26 — Pipeline Preview + Copilot Approval Flow
-**What:** Show generated pipeline in Slack with Approve / Edit / Cancel buttons  
+**What:** Show generated pipeline in web UI with Approve / Edit / Cancel buttons  
 **Files:**
-- Update `slack/message_templates.py` — copilot preview Block Kit message
-- Update `slack/copilot_handler.py` — approval action handlers
+- Update `web_ui/message_templates.py` — copilot preview message
+- Update `web_ui/copilot_handler.py` — approval action handlers
 
 **Preview message:**
 ```
@@ -473,7 +459,7 @@ Stage: Docker Build
 2. Commit with message: "feat: add generated pipeline [bot]"
 3. Return commit URL
 
-**Verify:** Approve in Slack → file appears in GitHub repo at correct path with correct content
+**Verify:** Approve in web UI → file appears in GitHub repo at correct path with correct content
 
 ---
 
@@ -483,19 +469,19 @@ Stage: Docker Build
 - `copilot/jenkins_configurator.py` — `create_job(name: str, jenkinsfile_content: str)`
 
 **Logic:** Use python-jenkins to create/update job with generated Jenkinsfile  
-**Verify:** Approve in Slack → new Jenkins job appears with correct pipeline config
+**Verify:** Approve in web UI → new Jenkins job appears with correct pipeline config
 
 ---
 
 ## PHASE 5: Secrets, Cloud LLMs & Production Polish
 
 ### Increment 29 — Secrets Manager
-**What:** Handle secrets via Slack DM only, pass directly to API, never log  
+**What:** Handle secrets via web UI only, pass directly to API, never log  
 **Files:**
-- `copilot/secrets_manager.py` — `request_secret_via_dm(user_id: str, secret_name: str) -> str`
+- `copilot/secrets_manager.py` — `request_secret(user_id: str, secret_name: str) -> str`
 
 **Rules (hardcoded, non-negotiable):**
-- Only ever sent via Slack DM to requesting user
+- Only ever entered via web UI — never exposed in logs or shared views
 - Passed directly to Jenkins/GitHub API
 - Never stored (not in memory, not in files, not in audit log)
 - Audit log records: secret name + user + timestamp (never value)
@@ -521,10 +507,10 @@ Stage: Docker Build
 **What:** One command to run everything  
 **Files:**
 - `Dockerfile` — Python 3.11 slim, installs requirements, runs webhook server
-- `docker-compose.yml` — services: `webhook`, `slack-bot`, `redis` (optional cache)
+- `docker-compose.yml` — services: `webhook`, `web-ui`, `redis` (optional cache)
 - `.env.example` — updated with Docker-specific vars
 
-**Verify:** `docker-compose up` → webhook server running on port 8000, Slack bot connected
+**Verify:** `docker-compose up` → webhook server running on port 8000, web UI accessible
 
 ---
 
@@ -612,10 +598,10 @@ Stage: Docker Build
 
 | Section | Increments | Milestone |
 |---|---|---|
-| Pre-Phase (Environment) | 1–5 | Dev environment fully configured, Slack + Ollama live |
-| Phase 1 (Foundation) | 6–11 | Pipeline fails → Slack alert ✓ |
-| Phase 2 (Verification + LLM) | 12–16 | Tool mismatches detected, LLM analysis in Slack ✓ |
-| Phase 3 (Approval + Execution) | 17–21 | Approve fix via Slack → agent executes ✓ |
+| Pre-Phase (Environment) | 1–5 | Dev environment fully configured, web UI + Ollama live |
+| Phase 1 (Foundation) | 6–11 | Pipeline fails → web UI alert ✓ |
+| Phase 2 (Verification + LLM) | 12–16 | Tool mismatches detected, LLM analysis in web UI ✓ |
+| Phase 3 (Approval + Execution) | 17–21 | Approve fix via web UI → agent executes ✓ |
 | Phase 4 (Copilot Mode) | 22–28 | NL → Jenkinsfile/YAML → committed to GitHub ✓ |
 | Phase 5 (Cloud + Polish) | 29–32 | Full stack, all providers, Docker Compose ✓ |
 | Phase 6 (Docs + Publish) | 33–37 | Live on GitHub, Dev.to + LinkedIn published ✓ |
@@ -649,7 +635,7 @@ GEMINI_API_KEY=
 
 1. Failed stage logs only → LLM. Passing stage logs discarded immediately.
 2. Tool verification always runs before LLM analysis.
-3. No fix executes without Slack button approval.
+3. No fix executes without web UI button approval.
 4. Tool mismatches, missing credentials, missing plugins → diagnostic alert only, never auto-fixed.
-5. Secrets: Slack DM only, direct to API, never logged anywhere.
+5. Secrets: web UI only, direct to API, never logged anywhere.
 6. Every increment verified before moving to next.

@@ -1,6 +1,6 @@
 # Current Priorities
 
-Last updated: 2026-04-09
+Last updated: 2026-04-22
 
 ## Active Build Phase
 **Phase 1 — Foundation** is the starting point.
@@ -13,10 +13,10 @@ Last updated: 2026-04-09
 - Log extractor pulls only failed stage logs
 - Log cleaner strips noise (ANSI, timestamps, INFO lines)
 - Basic Ollama integration for local testing (free)
-- Slack notifier sends formatted message
+- Web UI notifier displays formatted analysis
 - No fix execution yet — observation mode only
 
-**Milestone:** Pipeline fails → clean analysis posted to Slack
+**Milestone:** Pipeline fails → clean analysis shown in web UI
 
 ### Phase 2 — Tool Verification Crawler
 - Jenkins crawler: parse Jenkinsfile tool refs, query Jenkins API, exact + fuzzy match
@@ -27,29 +27,28 @@ Last updated: 2026-04-09
 **Milestone:** Tool mismatches detected precisely before LLM call
 
 ### Phase 3 — Approval Flow & Fix Execution
-- Slack Bolt approval handler (buttons: Approve / Retry / Dismiss)
+- Web UI approval handler (buttons: Approve / Retry / Dismiss)
 - Audit log (append-only)
 - Fix executor for pipeline-level fixes
 - Pipeline rerun after fix
 - Response caching (MD5 hash key)
-- Fallback chain (configured provider → Ollama → Slack alert)
+- Fallback chain (configured provider → Ollama → UI alert)
 
-**Milestone:** User approves fixes via Slack, agent executes and reports result
+**Milestone:** User approves fixes via web UI, agent executes and reports result
 
 ### Phase 4 — Copilot Mode
 - Pipeline generator: Jenkins Groovy + GitHub Actions YAML
 - Base templates for common patterns
-- Slack slash command handler (`/devops generate ...`)
+- Web UI chat command handler
 - Repo committer via GitHub API
 - Jenkins configurator via API
 
-**Milestone:** Generate complete pipelines from natural language in Slack
+**Milestone:** Generate complete pipelines from natural language in the web UI
 
 ### Phase 5 — Secrets Management & Polish
-- Secrets manager (Slack DM only, never logged, direct to Jenkins/GitHub API)
+- Secrets manager (web UI only, never logged, direct to Jenkins/GitHub API)
 - Full multi-provider LLM wiring + fallback chain tested
 - Docker Compose full stack
-- Optional web UI
 
 **Milestone:** Full system running end to end locally
 

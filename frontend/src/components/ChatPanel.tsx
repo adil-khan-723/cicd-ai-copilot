@@ -12,7 +12,6 @@ const EXAMPLES = [
   'Generate a Python CI pipeline for Jenkins with Docker build',
   'Create a GitHub Actions workflow for Node.js: test, build, push to ECR',
   'What causes "no space left on device" in Docker builds?',
-  'How do I add Slack notifications to my Jenkins pipeline?',
   'Explain declarative vs scripted Jenkinsfile syntax',
 ]
 
