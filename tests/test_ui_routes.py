@@ -113,3 +113,28 @@ def test_build_log_not_found():
         response = client.get("/api/build-log?job=my-job&build=42")
 
     assert response.status_code == 404
+
+
+def test_chat_handler_includes_history_with_role_labels():
+    """History must include role labels User: and Assistant: in the prompt."""
+    from ui.chat_handler import handle_chat
+
+    mock_provider = MagicMock()
+    mock_provider.stream_complete.return_value = iter(["answer"])
+
+    with patch('ui.chat_handler.get_provider', return_value=mock_provider):
+        chunks = list(handle_chat(
+            "What is Jenkins?",
+            history=[
+                {"role": "user",      "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+            ]
+        ))
+
+    assert chunks == ["answer"]
+    prompt_used = mock_provider.stream_complete.call_args[0][0]
+    assert "Hello" in prompt_used
+    assert "Hi there!" in prompt_used
+    assert "What is Jenkins?" in prompt_used
+    assert "User:" in prompt_used
+    assert "Assistant:" in prompt_used
