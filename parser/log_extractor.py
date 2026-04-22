@@ -3,6 +3,10 @@ from parser.models import FailureContext
 
 MAX_CHARS = 2000
 
+# Matches: [Pipeline] { (StageName)
+_STAGE_OPEN_RE = re.compile(r'^\[Pipeline\] \{ \((.+?)\)\s*$')
+_STAGE_CLOSE_RE = re.compile(r'^\[Pipeline\] \}')
+
 
 def extract_failed_logs(context: FailureContext) -> str:
     """
@@ -17,38 +21,45 @@ def extract_failed_logs(context: FailureContext) -> str:
     if context.platform == "github":
         return _extract_github_step_block(context.raw_log, context.failed_stage)
 
-    # Unknown platform — return tail of log (most errors are at the end)
     return _tail(context.raw_log, MAX_CHARS)
 
 
 def _extract_jenkins_stage_block(log: str, failed_stage: str) -> str:
     """
     Extract the log block for the failed Jenkins stage.
-    Stages are delimited by: [Pipeline] stage (StageName) ... [Pipeline] stage
+    Uses [Pipeline] { (Name) ... [Pipeline] } block boundaries.
     """
     lines = log.splitlines()
+    depth = 0
     in_stage = False
     block: list[str] = []
 
-    stage_pattern = re.compile(r"\[Pipeline\]\s+stage\s*\(([^)]+)\)")
-
     for line in lines:
-        match = stage_pattern.search(line)
-        if match:
-            stage_name = match.group(1).strip()
+        open_match = _STAGE_OPEN_RE.match(line.rstrip())
+        if open_match:
+            stage_name = open_match.group(1).strip()
             if stage_name.lower() == failed_stage.lower():
                 in_stage = True
+                depth = 1
                 block = [line]
                 continue
-            elif in_stage:
-                # Entered the next stage — stop collecting
+            elif in_stage and depth == 0:
                 break
 
-        if in_stage:
-            block.append(line)
+        if not in_stage:
+            continue
+
+        if _STAGE_OPEN_RE.match(line.rstrip()):
+            depth += 1
+        elif _STAGE_CLOSE_RE.match(line.rstrip()):
+            depth -= 1
+            if depth <= 0:
+                block.append(line)
+                break
+
+        block.append(line)
 
     if not block:
-        # Stage boundary not found — fall back to tail
         return _tail(log, MAX_CHARS)
 
     return _tail("\n".join(block), MAX_CHARS)
@@ -63,7 +74,7 @@ def _extract_github_step_block(log: str, failed_step: str) -> str:
     in_step = False
     block: list[str] = []
 
-    step_name = failed_step.split(" / ")[-1].lower()  # strip job prefix if present
+    step_name = failed_step.split(" / ")[-1].lower()
 
     for line in lines:
         if "##[group]" in line and step_name in line.lower():
@@ -83,7 +94,7 @@ def _extract_github_step_block(log: str, failed_step: str) -> str:
 
 
 def _tail(text: str, max_chars: int) -> str:
-    """Return the last max_chars characters of text (errors appear at the end)."""
+    """Return the last max_chars characters of text."""
     if len(text) <= max_chars:
         return text
     return "...[truncated]\n" + text[-max_chars:]
