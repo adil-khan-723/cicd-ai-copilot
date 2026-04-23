@@ -230,11 +230,12 @@ def configure_tool(
             )
 
         server.reconfig_job(job_name, new_xml)
-        logger.info("configure_tool: patched %s: '%s' → '%s'", job_name, referenced_name, configured_name)
+        server.build_job(job_name)
+        logger.info("configure_tool: patched %s: '%s' → '%s', retriggered", job_name, referenced_name, configured_name)
         return FixResult(
             success=True,
             fix_type="configure_tool",
-            detail=f"Jenkinsfile updated: '{referenced_name}' → '{configured_name}'. Job re-configured.",
+            detail=f"Jenkinsfile updated: '{referenced_name}' → '{configured_name}'. Job re-configured and retriggered.",
         )
     except jenkins.JenkinsException as e:
         logger.error("configure_tool failed for %s: %s", job_name, e)
@@ -271,11 +272,12 @@ def configure_credential(
             "</com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>"
         )
         server.create_credential("_", cred_xml)
-        logger.info("configure_credential: created '%s' for job %s", credential_id, job_name)
+        server.build_job(job_name)
+        logger.info("configure_credential: created '%s' for job %s, retriggered", credential_id, job_name)
         return FixResult(
             success=True,
             fix_type="configure_credential",
-            detail=f"Credential '{credential_id}' created in Jenkins (empty — update values in Jenkins UI).",
+            detail=f"Credential '{credential_id}' created in Jenkins (empty — update values in Jenkins UI). Job retriggered.",
         )
     except jenkins.JenkinsException as e:
         logger.error("configure_credential failed for %s: %s", job_name, e)
