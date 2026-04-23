@@ -60,7 +60,7 @@ export function SuccessBuildCard({ card, onDiscard }: { card: BuildCardType; onD
 }
 
 const DIAGNOSTIC_TYPES = new Set([
-  'diagnostic_only', 'tool_mismatch', 'missing_plugin', 'missing_credential',
+  'diagnostic_only', 'missing_plugin',
 ])
 
 export function BuildCard({ card, onDismiss, onOpenDetail }: {
@@ -82,10 +82,26 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
     if (!analysis) return
     setFixing(true)
     try {
+      const body: Record<string, string> = {
+        fix_type: analysis.fix_type,
+        job_name: card.job,
+        build_number: String(card.build),
+      }
+
+      if (analysis.fix_type === 'configure_tool' && analysis.verification?.mismatched_tools?.[0]) {
+        const m = analysis.verification.mismatched_tools[0]
+        body.referenced_name = m.referenced
+        body.configured_name = m.configured
+      }
+
+      if (analysis.fix_type === 'configure_credential' && analysis.verification?.missing_credentials?.[0]) {
+        body.credential_id = analysis.verification.missing_credentials[0]
+      }
+
       await fetch('/api/fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fix_type: analysis.fix_type, job_name: card.job, build_number: String(card.build) }),
+        body: JSON.stringify(body),
       })
     } finally { setFixing(false) }
   }
@@ -205,7 +221,9 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
                   className="gap-2 bg-success hover:bg-success/90 text-white font-semibold border-0 text-[13px] h-8 font-mono rounded-lg"
                 >
                   {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
-                  Apply Fix
+                  {analysis.fix_type === 'configure_tool' ? 'Apply Fix (Patch Tool Name)' :
+                   analysis.fix_type === 'configure_credential' ? 'Apply Fix (Create Credential)' :
+                   'Apply Fix'}
                 </Button>
               ) : (
                 <div className="flex items-center gap-2 text-[12px] text-warning font-mono">
