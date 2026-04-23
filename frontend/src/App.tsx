@@ -173,11 +173,28 @@ export default function App() {
     checkJenkinsLiveness()
   }
 
-  const allCards = Array.from(cards.values()).sort((a, b) => b.createdAt - a.createdAt)
-  // If Jenkins job list is loaded, hide cards for jobs not in Jenkins
-  const cardList = knownJobs.size > 0
-    ? allCards.filter(c => knownJobs.has(c.job))
-    : allCards
+  const allCards = (() => {
+    const visible = Array.from(cards.values()).filter(
+      c => knownJobs.size === 0 || knownJobs.has(c.job)
+    )
+    // Group by job
+    const groups = new Map<string, typeof visible>()
+    for (const c of visible) {
+      const g = groups.get(c.job) ?? []
+      g.push(c)
+      groups.set(c.job, g)
+    }
+    // Within each group: latest build number first
+    for (const g of groups.values()) {
+      g.sort((a, b) => Number(b.build) - Number(a.build))
+    }
+    // Sort groups: group whose latest build arrived most recently comes first
+    const sortedGroups = Array.from(groups.values()).sort(
+      (ga, gb) => gb[0].createdAt - ga[0].createdAt
+    )
+    return sortedGroups.flat()
+  })()
+  const cardList = allCards
 
   if (!bootDone) return null
 
