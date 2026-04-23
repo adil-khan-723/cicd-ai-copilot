@@ -8,6 +8,7 @@ Never auto-fixed (always diagnostic_only):
   - tool mismatches, missing plugins, missing credentials, IAM issues
 """
 import logging
+import re
 import jenkins
 from config import get_settings
 from agent.models import FixResult
@@ -105,7 +106,6 @@ def increase_timeout(job_name: str, build_number: str = "0") -> FixResult:
         server = _get_jenkins_server()
         config_xml = server.get_job_config(job_name)
 
-        import re
         # Match <timeout>NNN</timeout> (Jenkins Build Timeout plugin)
         pattern = re.compile(r"(<timeout>)(\d+)(</timeout>)")
         match = pattern.search(config_xml)
@@ -154,9 +154,8 @@ def configure_tool(
         server = _get_jenkins_server()
         config_xml = server.get_job_config(job_name)
 
-        import re
         pattern = re.compile(
-            r"((?:maven|jdk|gradle|nodejs|docker|git|ant)\s+['\"])" + re.escape(referenced_name) + r"(['\"])",
+            r"(\b(?:maven|jdk|gradle|nodejs|docker|git|ant)\s+['\"])" + re.escape(referenced_name) + r"(['\"])",
             re.IGNORECASE,
         )
         new_xml, count = pattern.subn(r"\g<1>" + configured_name + r"\g<2>", config_xml)
@@ -200,20 +199,16 @@ def configure_credential(
         )
     try:
         server = _get_jenkins_server()
-        server.create_credential(
-            "system::system::jenkins",
-            {
-                "": "0",
-                "credentials": {
-                    "scope": "GLOBAL",
-                    "id": credential_id,
-                    "username": "",
-                    "password": "",
-                    "description": f"Auto-created by DevOps AI Agent (job: {job_name}). Update credentials in Jenkins UI.",
-                    "$class": "com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl",
-                },
-            },
+        cred_xml = (
+            "<com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>"
+            "<scope>GLOBAL</scope>"
+            f"<id>{credential_id}</id>"
+            "<username></username>"
+            "<password></password>"
+            f"<description>Auto-created by DevOps AI Agent (job: {job_name}). Update credentials in Jenkins UI.</description>"
+            "</com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>"
         )
+        server.create_credential("_", cred_xml)
         logger.info("configure_credential: created '%s' for job %s", credential_id, job_name)
         return FixResult(
             success=True,
