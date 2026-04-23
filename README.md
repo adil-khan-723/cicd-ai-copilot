@@ -858,6 +858,52 @@ Add Jenkins user to docker group and restart.
 
 ---
 
+## Running Jenkins in Docker — Docker Socket Access
+
+When Jenkins runs inside a Docker container and your Jenkinsfiles contain `docker build` or `docker push` commands, Jenkins needs access to the Docker daemon socket (`/var/run/docker.sock`).
+
+### How it works
+
+```
+Your machine (macOS / Linux / Windows)
+└── Docker daemon  ←── owns /var/run/docker.sock
+    └── Jenkins container
+        └── /var/run/docker.sock  (bind-mounted from host)
+            └── Jenkinsfile: docker build ...  ──► talks to host daemon
+```
+
+The socket is mounted into the Jenkins container. Jenkins must have read/write permission on it.
+
+### start.sh handles this automatically
+
+`./start.sh` detects a running Jenkins container and fixes socket permissions on every startup:
+
+| Platform | Method |
+|---|---|
+| **macOS** (Docker Desktop) | `chmod 666` on the mounted socket via `docker exec` |
+| **Windows** (Docker Desktop) | Same as macOS |
+| **Linux** | Adds `jenkins` user to `docker` group inside container |
+
+You do not need to run anything manually — just run `./start.sh` as normal.
+
+### Security note
+
+`chmod 666` on the Docker socket grants **any process on the system** access to the Docker daemon, which is equivalent to root access. This is acceptable for a local development machine. Do not use this approach in a shared or production environment — use Docker-in-Docker (dind) or a rootless Docker setup instead.
+
+### If you manage Jenkins outside start.sh
+
+Run once after every Docker Desktop restart:
+
+```bash
+# macOS / Windows (Docker Desktop)
+docker exec -u root jenkins chmod 666 /var/run/docker.sock
+
+# Linux
+docker exec -u root jenkins usermod -aG docker jenkins
+```
+
+---
+
 ## Configuration Reference
 
 ### .env.example

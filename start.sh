@@ -271,6 +271,46 @@ else warn "JENKINS_URL not set — configure via Settings in the UI"; fi
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then ok "GitHub token set"
 else warn "GITHUB_TOKEN not set — Copilot commit mode disabled"; fi
 
+# ── 4b. Docker socket permissions for Jenkins-in-Docker ──────
+# When Jenkins runs inside a Docker container, the Docker socket is bind-mounted
+# from the host (macOS/Windows: Docker Desktop VM; Linux: host directly).
+# The Jenkins process needs read/write access to run docker build commands.
+# chmod 666 on the socket is intentional for local dev — do not use in production.
+_fix_jenkins_docker_socket() {
+  local container="$1"
+  if docker exec -u root "$container" test -S /var/run/docker.sock 2>/dev/null; then
+    docker exec -u root "$container" chmod 666 /var/run/docker.sock 2>/dev/null && \
+      ok "Docker socket permissions set for Jenkins container '$container'" || \
+      warn "Could not set Docker socket permissions in '$container' — docker build may fail"
+  fi
+}
+
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+  JENKINS_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i jenkins | head -1 || true)
+  if [[ -n "$JENKINS_CONTAINER" ]]; then
+    OS_TYPE="$(uname -s)"
+    case "$OS_TYPE" in
+      Darwin)
+        # macOS — Docker Desktop VM owns the socket; fix via docker exec
+        _fix_jenkins_docker_socket "$JENKINS_CONTAINER"
+        ;;
+      Linux)
+        # Linux — socket owned by host docker group; add jenkins user to docker group
+        if docker exec "$JENKINS_CONTAINER" id jenkins &>/dev/null 2>&1; then
+          docker exec -u root "$JENKINS_CONTAINER" \
+            bash -c "getent group docker || groupadd docker; usermod -aG docker jenkins" 2>/dev/null && \
+            ok "Jenkins user added to docker group in '$JENKINS_CONTAINER'" || \
+            _fix_jenkins_docker_socket "$JENKINS_CONTAINER"
+        fi
+        ;;
+      MINGW*|CYGWIN*|MSYS*)
+        # Windows — Docker Desktop VM, same approach as macOS
+        _fix_jenkins_docker_socket "$JENKINS_CONTAINER"
+        ;;
+    esac
+  fi
+fi
+
 # ── 5. Node / npm (for UI builds) ────────────────────────────
 HAS_NODE=false
 if command -v node &>/dev/null && command -v npm &>/dev/null; then
