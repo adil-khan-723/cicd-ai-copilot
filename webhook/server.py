@@ -374,6 +374,29 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         })
         context_str = build_context(cleaned, report, ctx)
         analysis = analyze(context_str)  # always returns a dict — never raises
+
+        # Verification facts override LLM guess — crawler findings are deterministic,
+        # LLM output is probabilistic. If the crawler found a mismatch/missing cred
+        # and the LLM didn't pick it up, force the correct fix_type.
+        if report.mismatched_tools and analysis.get("fix_type") != "configure_tool":
+            analysis["fix_type"] = "configure_tool"
+            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.85)
+            if not analysis.get("fix_suggestion"):
+                m = report.mismatched_tools[0]
+                analysis["fix_suggestion"] = (
+                    f"Rename tool reference from '{m.referenced}' to '{m.configured}' "
+                    f"in the Jenkinsfile tools block."
+                )
+        elif report.missing_credentials and analysis.get("fix_type") != "configure_credential":
+            analysis["fix_type"] = "configure_credential"
+            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.82)
+            if not analysis.get("fix_suggestion"):
+                cid = report.missing_credentials[0]
+                analysis["fix_suggestion"] = (
+                    f"Create credential '{cid}' in Jenkins Global Credentials store "
+                    f"(Manage Jenkins → Credentials)."
+                )
+
         logger.info(
             "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s",
             analysis.get("root_cause", "")[:60],
