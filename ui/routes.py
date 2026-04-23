@@ -251,16 +251,31 @@ class FixPayload(BaseModel):
     fix_type: str
     job_name: str
     build_number: str = "0"
+    referenced_name: Optional[str] = None
+    configured_name: Optional[str] = None
+    credential_id: Optional[str] = None
 
 
 @router.post("/api/fix")
 async def fix(payload: FixPayload):
     from agent.fix_executor import execute_fix
     from agent.audit_log import log_fix
+    from ui.event_bus import bus
 
-    result = await asyncio.get_event_loop().run_in_executor(
-        None, execute_fix, payload.fix_type, payload.job_name, payload.build_number
+    kwargs = {}
+    if payload.referenced_name:
+        kwargs["referenced_name"] = payload.referenced_name
+    if payload.configured_name:
+        kwargs["configured_name"] = payload.configured_name
+    if payload.credential_id:
+        kwargs["credential_id"] = payload.credential_id
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: execute_fix(payload.fix_type, payload.job_name, payload.build_number, **kwargs)
     )
+
     log_fix(
         fix_type=payload.fix_type,
         triggered_by="web-ui",
@@ -269,7 +284,7 @@ async def fix(payload: FixPayload):
         result="success" if result.success else "failed",
         confidence=None,
     )
-    from ui.event_bus import bus
+
     bus.publish({
         "type": "fix_result",
         "job": payload.job_name,
