@@ -270,6 +270,26 @@ async def fix(payload: FixPayload):
     if payload.credential_id:
         kwargs["credential_id"] = payload.credential_id
 
+    # Fallback: for configure_tool with missing names, parse from console log
+    if payload.fix_type == "configure_tool" and (not kwargs.get("referenced_name") or not kwargs.get("configured_name")):
+        import re as _re, requests as _req
+        from config import get_settings as _gs
+        _s = _gs()
+        try:
+            log = _req.get(
+                f"{_s.jenkins_url}/job/{payload.job_name}/{payload.build_number}/consoleText",
+                auth=(_s.jenkins_user, _s.jenkins_token), timeout=10,
+            ).text
+            m = _re.search(
+                r'Tool type "[^"]+" does not have an install of "([^"]+)"[^"]*"([^"]+)"',
+                log, _re.IGNORECASE,
+            )
+            if m and m.group(2).lower() != "null":
+                kwargs["referenced_name"] = m.group(1)
+                kwargs["configured_name"] = m.group(2)
+        except Exception:
+            pass
+
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
