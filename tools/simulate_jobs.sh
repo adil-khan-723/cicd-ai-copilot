@@ -48,14 +48,18 @@ job2() {
     -H "Content-Type: application/json" \
     -d '{
       "job_name": "node-deploy",
-      "build_number": 3,
+      "build_number": 4,
       "result": "FAILURE",
       "branch": "main",
       "log": "[Pipeline] { (Checkout)\nChecking out from git...\n[Pipeline] }\n[Pipeline] { (Build)\nRunning npm install && npm run build...\nBuild complete\n[Pipeline] }\n[Pipeline] { (Push to Registry)\nAttempting docker push to ECR...\nERROR: CredentialsNotFoundException: No credentials found with id ECR_CREDENTIALS\nFAILURE: Build failed in stage Push to Registry\n[Pipeline] }\n[Pipeline] { (Notify)\nStage \"Notify\" skipped due to earlier failure\n[Pipeline] }\n",
-      "jenkinsfile": "pipeline {\n  agent any\n  stages {\n    stage(\"Checkout\") { steps { checkout scm } }\n    stage(\"Build\") { steps { sh \"npm install && npm run build\" } }\n    stage(\"Push to Registry\") {\n      steps {\n        withCredentials([usernamePassword(credentialsId: '\''ECR_CREDENTIALS'\'', usernameVariable: '\''AWS_USER'\'', passwordVariable: '\''AWS_PASS'\'')]) {\n          sh \"docker push ecr.io/myapp:latest\"\n        }\n      }\n    }\n    stage(\"Notify\") { steps { sh \"curl -X POST $SLACK_URL\" } }\n  }\n}"
+      "jenkinsfile": "pipeline {\n  agent any\n  stages {\n    stage(\"Checkout\") { steps { checkout scm } }\n    stage(\"Build\") { steps { sh \"npm install && npm run build\" } }\n    stage(\"Push to Registry\") {\n      steps {\n        withCredentials([usernamePassword(credentialsId: '\''ECR_CREDENTIALS'\'', usernameVariable: '\''AWS_USER'\'', passwordVariable: '\''AWS_PASS'\'')]) {\n          sh \"docker push ecr.io/myapp:latest\"\n        }\n      }\n    }\n    stage(\"Notify\") { steps { sh \"curl -X POST $SLACK_URL\" } }\n  }\n}",
+      "sim_verification": {
+        "missing_credentials": ["ECR_CREDENTIALS"],
+        "mismatched_tools": []
+      }
     }'
   echo ""
-  echo "Job 2 sent. Crawler finds ECR_CREDENTIALS missing -> configure_credential fix offered."
+  echo "Job 2 sent. sim_verification injects missing ECR_CREDENTIALS -> configure_credential fix offered."
 }
 
 # ---------------------------------------------------------------------------
@@ -70,14 +74,18 @@ job3() {
     -H "Content-Type: application/json" \
     -d '{
       "job_name": "java-pipeline",
-      "build_number": 5,
+      "build_number": 6,
       "result": "FAILURE",
       "branch": "main",
       "log": "[Pipeline] { (Checkout)\nChecking out from git...\n[Pipeline] }\n[Pipeline] { (Compile)\nRunning Maven build...\n/var/jenkins_home/tools/hudson.tasks.Maven_MavenInstallation/Maven3: not found\nERROR: No such installation: Maven3. The tool '\''Maven3'\'' is not configured in Jenkins Global Tool Configuration.\nFAILURE: Build failed in stage Compile\n[Pipeline] }\n[Pipeline] { (Test)\nStage \"Test\" skipped due to earlier failure\n[Pipeline] }\n[Pipeline] { (Package)\nStage \"Package\" skipped due to earlier failure\n[Pipeline] }\n",
-      "jenkinsfile": "pipeline {\n  agent any\n  tools {\n    maven '\''Maven3'\''\n    jdk '\''JDK17'\''\n  }\n  stages {\n    stage(\"Checkout\") { steps { checkout scm } }\n    stage(\"Compile\") { steps { sh \"mvn compile\" } }\n    stage(\"Test\") { steps { sh \"mvn test\" } }\n    stage(\"Package\") { steps { sh \"mvn package\" } }\n  }\n}"
+      "jenkinsfile": "pipeline {\n  agent any\n  tools {\n    maven '\''Maven3'\''\n    jdk '\''JDK17'\''\n  }\n  stages {\n    stage(\"Checkout\") { steps { checkout scm } }\n    stage(\"Compile\") { steps { sh \"mvn compile\" } }\n    stage(\"Test\") { steps { sh \"mvn test\" } }\n    stage(\"Package\") { steps { sh \"mvn package\" } }\n  }\n}",
+      "sim_verification": {
+        "mismatched_tools": [{"referenced": "Maven3", "configured": "Maven-3", "match_score": 0.91}],
+        "missing_credentials": []
+      }
     }'
   echo ""
-  echo "Job 3 sent. Crawler finds Maven3 vs Maven-3 mismatch -> configure_tool fix offered."
+  echo "Job 3 sent. sim_verification injects Maven3 vs Maven-3 mismatch -> configure_tool fix offered."
 }
 
 # ---------------------------------------------------------------------------

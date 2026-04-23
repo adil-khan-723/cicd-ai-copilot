@@ -477,10 +477,29 @@ def _run_verification(ctx, payload: dict) -> "VerificationReport":
     """
     Run Jenkins or GitHub verification — returns empty report on any error.
     Verification is always best-effort and never blocks the pipeline.
+
+    If the payload contains a 'sim_verification' dict (for simulation/demo without
+    live Jenkins), that data is used directly instead of hitting the crawler.
     """
-    from verification.models import VerificationReport
+    from verification.models import VerificationReport, ToolMismatch
     from config import get_settings
     settings = get_settings()
+
+    # Simulation mode: caller injected verification data directly in payload
+    sim = payload.get("sim_verification")
+    if sim:
+        report = VerificationReport(platform="jenkins")
+        for m in sim.get("mismatched_tools", []):
+            report.mismatched_tools.append(ToolMismatch(
+                referenced=m["referenced"],
+                configured=m["configured"],
+                match_score=m.get("match_score", 0.91),
+            ))
+        report.missing_credentials.extend(sim.get("missing_credentials", []))
+        report.missing_plugins.extend(sim.get("missing_plugins", []))
+        logger.info("[verification] Using sim_verification: %d mismatches, %d missing creds",
+                    len(report.mismatched_tools), len(report.missing_credentials))
+        return report
 
     try:
         from verification.jenkins_crawler import verify_jenkins_tools
