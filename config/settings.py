@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
-from functools import lru_cache
 
 
 class Settings(BaseSettings):
@@ -47,6 +46,5 @@ class Settings(BaseSettings):
     audit_log_path: str = Field(default="audit.log")
 
 
-@lru_cache
 def get_settings() -> Settings:
     return Settings()
