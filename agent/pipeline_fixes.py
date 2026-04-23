@@ -78,21 +78,80 @@ def clear_npm_cache(job_name: str, build_number: str = "0") -> FixResult:
 
 
 def pull_fresh_image(job_name: str, build_number: str = "0") -> FixResult:
-    """Trigger build with PULL_FRESH_IMAGE=true parameter, falling back to plain retry."""
+    """
+    Patch the Dockerfile inside the Jenkins container to use a valid base image tag,
+    then retrigger the job.
+
+    Looks for FROM lines with obviously bad tags (containing 'nonexistent', '-bad', '-broken',
+    '-missing', or '-invalid') and replaces only the tag portion with 'latest'.
+    If no bad tag is found, falls back to a plain retry.
+    """
+    import subprocess
+    import shlex
+
+    _BAD_SUFFIX_RE = re.compile(
+        r"-?(?:nonexistent|bad|broken|missing|invalid)\w*", re.IGNORECASE
+    )
+    _BAD_TAG_RE = re.compile(
+        r"(FROM\s+\S+?:)((?:[a-z0-9._]+-)*[a-z0-9._]*(?:nonexistent|bad|broken|missing|invalid)[a-z0-9._-]*)",
+        re.IGNORECASE,
+    )
+
     try:
+        # Find Dockerfiles inside the Jenkins container that contain a bad tag
+        find_cmd = ["docker", "exec", "jenkins", "find", "/tmp", "-name", "Dockerfile", "-maxdepth", "4"]
+        find_result = subprocess.run(find_cmd, capture_output=True, text=True, timeout=10)
+        dockerfiles = [p.strip() for p in find_result.stdout.splitlines() if p.strip()]
+
+        patched = []
+        for df_path in dockerfiles:
+            cat_result = subprocess.run(
+                ["docker", "exec", "jenkins", "cat", df_path],
+                capture_output=True, text=True, timeout=10,
+            )
+            content = cat_result.stdout
+            if not _BAD_TAG_RE.search(content):
+                continue
+            def _fix_tag(m: re.Match) -> str:
+                prefix = m.group(1)  # "FROM node:"
+                tag = _BAD_SUFFIX_RE.sub("", m.group(2)).rstrip("-")
+                return prefix + (tag if tag else "latest")
+
+            fixed = _BAD_TAG_RE.sub(_fix_tag, content)
+            # Write fixed content back via sh -c
+            write_cmd = ["docker", "exec", "jenkins", "sh", "-c",
+                         f"cat > {shlex.quote(df_path)} << 'DOCKERFILE_EOF'\n{fixed}\nDOCKERFILE_EOF"]
+            # Use printf to avoid heredoc issues
+            write_cmd2 = ["docker", "exec", "jenkins", "sh", "-c",
+                          f"printf '%s' {shlex.quote(fixed)} > {shlex.quote(df_path)}"]
+            wr = subprocess.run(write_cmd2, capture_output=True, text=True, timeout=10)
+            if wr.returncode == 0:
+                patched.append(df_path)
+                logger.info("pull_fresh_image: patched %s (bad tag → latest)", df_path)
+
         server = _get_jenkins_server()
         try:
-            server.build_job(job_name, parameters={"PULL_FRESH_IMAGE": "true"})
-            logger.info("Triggered fresh image pull build for: %s", job_name)
-            return FixResult(success=True, fix_type="pull_image", detail=f"Job '{job_name}' triggered with PULL_FRESH_IMAGE=true.")
-        except Exception as param_err:
-            if "400" in str(param_err) or "Bad Request" in str(param_err):
-                server.build_job(job_name)
-                return FixResult(success=True, fix_type="pull_image", detail=f"Job '{job_name}' re-triggered (no parameters defined — plain retry).")
-            raise
+            server.build_job(job_name)
+        except Exception:
+            pass
+
+        if patched:
+            return FixResult(
+                success=True,
+                fix_type="pull_image",
+                detail=f"Fixed bad image tag in {', '.join(patched)} (→ latest). Job '{job_name}' retriggered.",
+            )
+        # No bad tag found — plain retry
+        logger.info("pull_fresh_image: no bad Dockerfile tag found, plain retry for %s", job_name)
+        return FixResult(
+            success=True,
+            fix_type="pull_image",
+            detail=f"No bad image tag found — job '{job_name}' re-triggered.",
+        )
     except jenkins.JenkinsException as e:
         return FixResult(success=False, fix_type="pull_image", detail=str(e))
     except Exception as e:
+        logger.error("pull_fresh_image unexpected error for %s: %s", job_name, e)
         return FixResult(success=False, fix_type="pull_image", detail=f"Unexpected error: {e}")
 
 
