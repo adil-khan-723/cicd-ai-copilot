@@ -12,6 +12,8 @@ from agent.pipeline_fixes import (
     clear_npm_cache,
     pull_fresh_image,
     increase_timeout,
+    configure_tool,
+    configure_credential,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,20 +25,23 @@ _FIX_MAP = {
     "clear_npm_cache": clear_npm_cache,
     "pull_image": pull_fresh_image,
     "increase_timeout": increase_timeout,
+    "configure_tool": configure_tool,
+    "configure_credential": configure_credential,
 }
 
 # These fix types must never be auto-executed — always diagnostic
 _DIAGNOSTIC_ONLY = {"diagnostic_only"}
 
 
-def execute_fix(fix_type: str, job_name: str, build_number: str = "0") -> FixResult:
+def execute_fix(fix_type: str, job_name: str, build_number: str = "0", **kwargs) -> FixResult:
     """
     Execute the approved fix.
 
     Args:
-        fix_type: One of retry|clear_cache|pull_image|increase_timeout|diagnostic_only
+        fix_type: One of retry|clear_cache|pull_image|increase_timeout|configure_tool|configure_credential|diagnostic_only
         job_name: Jenkins job name
-        build_number: Build number (informational, used in audit log)
+        build_number: Build number (informational)
+        **kwargs: Extra params forwarded to fix function (e.g. referenced_name, configured_name, credential_id)
 
     Returns:
         FixResult with success status and detail message.
@@ -58,5 +63,5 @@ def execute_fix(fix_type: str, job_name: str, build_number: str = "0") -> FixRes
             detail=f"Unknown fix type '{fix_type}' — no executor registered.",
         )
 
-    logger.info("Executing fix '%s' for job '%s' build #%s", fix_type, job_name, build_number)
-    return executor(job_name, build_number)
+    logger.info("Executing fix '%s' for job '%s' build #%s kwargs=%s", fix_type, job_name, build_number, kwargs)
+    return executor(job_name, build_number, **kwargs)
