@@ -188,7 +188,14 @@ ok "Python $PYVER"
 VENV_DIR=".venv"
 if [[ ! -d "$VENV_DIR" ]]; then
   info "Creating virtualenv in .venv ..."
-  python3 -m venv "$VENV_DIR"
+  # Use python3.13 explicitly — python3.14+ breaks pydantic-core
+  if command -v python3.13 &>/dev/null; then
+    python3.13 -m venv "$VENV_DIR"
+  elif command -v python3.12 &>/dev/null; then
+    python3.12 -m venv "$VENV_DIR"
+  else
+    python3 -m venv "$VENV_DIR"
+  fi
 fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
