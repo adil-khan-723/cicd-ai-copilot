@@ -213,8 +213,11 @@ def configure_tool(
         server = _get_jenkins_server()
         config_xml = server.get_job_config(job_name)
 
+        # Jenkins stores Jenkinsfile script XML-escaped, so quotes appear as &quot;
+        # Match both raw quotes and XML-escaped form
+        q = r"""(?:'|"|&quot;)"""
         pattern = re.compile(
-            r"(\b(?:maven|jdk|gradle|nodejs|docker|git|ant)\s+['\"])" + re.escape(referenced_name) + r"(['\"])",
+            r"(\b(?:maven|jdk|gradle|nodejs|docker|git|ant)\s+" + q + r")" + re.escape(referenced_name) + r"(" + q + r")",
             re.IGNORECASE,
         )
         new_xml, count = pattern.subn(r"\g<1>" + configured_name + r"\g<2>", config_xml)
