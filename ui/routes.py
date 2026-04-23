@@ -282,7 +282,7 @@ async def fix(payload: FixPayload):
         job_name=payload.job_name,
         build_number=payload.build_number,
         result="success" if result.success else "failed",
-        confidence=None,
+        confidence_at_trigger=0.0,
     )
 
     bus.publish({
