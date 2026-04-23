@@ -132,3 +132,96 @@ def increase_timeout(job_name: str, build_number: str = "0") -> FixResult:
         return FixResult(success=False, fix_type="increase_timeout", detail=str(e))
     except Exception as e:
         return FixResult(success=False, fix_type="increase_timeout", detail=f"Unexpected error: {e}")
+
+
+def configure_tool(
+    job_name: str,
+    build_number: str = "0",
+    referenced_name: str = "",
+    configured_name: str = "",
+) -> FixResult:
+    """
+    Patch the Jenkinsfile in the job's config XML to replace referenced_name
+    with configured_name in the tools {} block, then reconfig the job.
+    """
+    if not referenced_name or not configured_name:
+        return FixResult(
+            success=False,
+            fix_type="configure_tool",
+            detail="Missing referenced_name or configured_name — cannot patch.",
+        )
+    try:
+        server = _get_jenkins_server()
+        config_xml = server.get_job_config(job_name)
+
+        import re
+        pattern = re.compile(
+            r"((?:maven|jdk|gradle|nodejs|docker|git|ant)\s+['\"])" + re.escape(referenced_name) + r"(['\"])",
+            re.IGNORECASE,
+        )
+        new_xml, count = pattern.subn(r"\g<1>" + configured_name + r"\g<2>", config_xml)
+
+        if count == 0:
+            return FixResult(
+                success=False,
+                fix_type="configure_tool",
+                detail=f"Tool name '{referenced_name}' not found in job config XML.",
+            )
+
+        server.reconfig_job(job_name, new_xml)
+        logger.info("configure_tool: patched %s: '%s' → '%s'", job_name, referenced_name, configured_name)
+        return FixResult(
+            success=True,
+            fix_type="configure_tool",
+            detail=f"Jenkinsfile updated: '{referenced_name}' → '{configured_name}'. Job re-configured.",
+        )
+    except jenkins.JenkinsException as e:
+        logger.error("configure_tool failed for %s: %s", job_name, e)
+        return FixResult(success=False, fix_type="configure_tool", detail=str(e))
+    except Exception as e:
+        return FixResult(success=False, fix_type="configure_tool", detail=f"Unexpected error: {e}")
+
+
+def configure_credential(
+    job_name: str,
+    build_number: str = "0",
+    credential_id: str = "",
+) -> FixResult:
+    """
+    Create a placeholder username/password credential in Jenkins global store
+    with the given credential_id so the Jenkinsfile reference resolves.
+    Credentials are created empty — operator must update values in Jenkins UI.
+    """
+    if not credential_id:
+        return FixResult(
+            success=False,
+            fix_type="configure_credential",
+            detail="No credential_id provided.",
+        )
+    try:
+        server = _get_jenkins_server()
+        server.create_credential(
+            "system::system::jenkins",
+            {
+                "": "0",
+                "credentials": {
+                    "scope": "GLOBAL",
+                    "id": credential_id,
+                    "username": "",
+                    "password": "",
+                    "description": f"Auto-created by DevOps AI Agent (job: {job_name}). Update credentials in Jenkins UI.",
+                    "$class": "com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl",
+                },
+            },
+        )
+        logger.info("configure_credential: created '%s' for job %s", credential_id, job_name)
+        return FixResult(
+            success=True,
+            fix_type="configure_credential",
+            detail=f"Credential '{credential_id}' created in Jenkins (empty — update values in Jenkins UI).",
+        )
+    except jenkins.JenkinsException as e:
+        logger.error("configure_credential failed for %s: %s", job_name, e)
+        return FixResult(success=False, fix_type="configure_credential", detail=str(e))
+    except Exception as e:
+        return FixResult(success=False, fix_type="configure_credential", detail=f"Unexpected error: {e}")
