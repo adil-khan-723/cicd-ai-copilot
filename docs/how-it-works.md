@@ -4,7 +4,7 @@
 
 ## Starting the App
 
-Run `./launch.sh` or `./start.sh` (or `docker-compose up`). The script:
+Run `./start.sh` (or `docker-compose up`). The script:
 1. Checks Python 3.11+, creates `.venv`, installs `requirements.txt`
 2. Copies `.env.example` → `.env` if missing, exits asking you to fill it
 3. Checks Ollama reachability or API key depending on `LLM_PROVIDER`

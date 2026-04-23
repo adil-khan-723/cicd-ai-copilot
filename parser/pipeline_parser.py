@@ -103,7 +103,8 @@ def _parse_github(payload: dict) -> FailureContext:
 
 
 _ERROR_PATTERN = re.compile(r"\b(ERROR|FAILED|Exception|Error:|fatal|FAILURE)\b", re.IGNORECASE)
-_STAGE_PATTERN = re.compile(r"\[Pipeline\]\s+stage\s*\(([^)]+)\)")
+# Matches both [Pipeline] { (Name) (declarative) and [Pipeline] stage (Name) (scripted)
+_STAGE_PATTERN = re.compile(r"\[Pipeline\]\s+(?:\{\s*|stage\s*)\(([^)]+)\)")
 
 
 def _extract_jenkins_stage(log: str) -> str:

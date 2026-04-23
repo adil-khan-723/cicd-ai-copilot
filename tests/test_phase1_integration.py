@@ -14,17 +14,20 @@ JENKINS_PAYLOAD = {
     "result": "FAILURE",
     "branch": "main",
     "log": (
-        "[Pipeline] stage (Checkout)\n"
+        "[Pipeline] { (Checkout)\n"
         "[INFO] Cloning repository\n"
-        "[Pipeline] stage (Docker Build)\n"
+        "[Pipeline] }\n"
+        "[Pipeline] { (Docker Build)\n"
         "[INFO] \x1b[32mStarting docker build\x1b[0m\n"
         "14:23:11 Step 1/8 : FROM python:3.11\n"
         "[INFO] Step 2/8 : RUN pip install -r requirements.txt\n"
         "14:23:45 ERROR: Could not find a version that satisfies the requirement fastapi==99.0.0\n"
         "14:23:45 ERROR: No matching distribution found for fastapi==99.0.0\n"
         "##################################\n"
-        "[Pipeline] stage (Test)\n"
+        "[Pipeline] }\n"
+        "[Pipeline] { (Test)\n"
         "[INFO] Skipped\n"
+        "[Pipeline] }\n"
     ),
 }
 

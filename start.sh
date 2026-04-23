@@ -29,11 +29,11 @@ die()  { echo -e "${RED}✗${RST}  $*" >&2; exit 1; }
 # ── Parse args ──────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --port)       PORT="$2"; shift 2 ;;
-    --no-browser) OPEN_BROWSER=false; shift ;;
-    --build-ui)   FORCE_UI_BUILD=true; shift ;;
-    --workers)        WORKERS="$2"; shift 2 ;;
-    --setup-jenkins)  SETUP_JENKINS=true; shift ;;
+    --port)          PORT="$2"; shift 2 ;;
+    --no-browser)    OPEN_BROWSER=false; shift ;;
+    --build-ui)      FORCE_UI_BUILD=true; shift ;;
+    --workers)       WORKERS="$2"; shift 2 ;;
+    --setup-jenkins) SETUP_JENKINS=true; shift ;;
     -h|--help)
       echo "Usage: ./start.sh [--port 8000] [--no-browser] [--build-ui] [--workers N]"
       echo "       ./start.sh --setup-jenkins   # wire Jenkins to send build events here"
@@ -81,7 +81,6 @@ if [[ "$SETUP_JENKINS" == "true" ]]; then
   if [[ -z "$AGENT_URL" ]]; then
     JENKINS_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i jenkins | head -1 || echo "")
     if [[ -n "$JENKINS_CONTAINER" ]]; then
-      # Jenkins is in Docker — use host.docker.internal to reach the host
       AGENT_URL="http://host.docker.internal:${PORT}/webhook/jenkins-notification"
     else
       AGENT_URL="http://localhost:${PORT}/webhook/jenkins-notification"
@@ -89,7 +88,6 @@ if [[ "$SETUP_JENKINS" == "true" ]]; then
   fi
   info "Listener will POST to: $AGENT_URL"
 
-  # Groovy script — bash variables expanded here, Groovy variables escaped
   GROOVY_SCRIPT=$(cat <<GROOVY
 import hudson.model.listeners.RunListener
 import hudson.model.Run
@@ -155,7 +153,6 @@ GROOVY
     die "Listener may not have registered — check the output above"
   fi
 
-  # Persist to init.groovy.d so it survives Jenkins restarts
   JENKINS_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i jenkins | head -1 || echo "")
   if [[ -n "$JENKINS_CONTAINER" ]]; then
     info "Persisting listener to ${JENKINS_CONTAINER}:/var/jenkins_home/init.groovy.d/ ..."
@@ -174,7 +171,7 @@ GROOVY
   exit 0
 fi
 
-# ── 1. Python version ────────────────────────────────────────
+# ── 1. Python ────────────────────────────────────────────────
 info "Checking Python..."
 if ! command -v python3 &>/dev/null; then
   die "python3 not found. Install Python 3.11+."
@@ -187,40 +184,85 @@ if [[ "$PYMAJ" -lt 3 || ("$PYMAJ" -eq 3 && "$PYMIN" -lt 11) ]]; then
 fi
 ok "Python $PYVER"
 
-# ── 2. Virtualenv / pip ──────────────────────────────────────
+# ── 2. Virtualenv ────────────────────────────────────────────
 VENV_DIR=".venv"
 if [[ ! -d "$VENV_DIR" ]]; then
   info "Creating virtualenv in .venv ..."
   python3 -m venv "$VENV_DIR"
 fi
-
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
-# ── 3. Python deps ───────────────────────────────────────────
+# ── 3. Python dependencies ───────────────────────────────────
 info "Checking Python dependencies..."
 if ! python -c "import uvicorn" &>/dev/null || ! python -c "import fastapi" &>/dev/null; then
-  info "Installing Python dependencies from requirements.txt ..."
+  info "Installing from requirements.txt ..."
   pip install -q --upgrade pip
   pip install -q -r requirements.txt
   ok "Python dependencies installed"
 else
-  ok "Python dependencies present"
+  # Reinstall if requirements.txt is newer than uvicorn binary
+  UVICORN_BIN="$VENV_DIR/bin/uvicorn"
+  if [[ requirements.txt -nt "$UVICORN_BIN" ]]; then
+    info "requirements.txt changed — syncing ..."
+    pip install -q -r requirements.txt
+    ok "Python dependencies updated"
+  else
+    ok "Python dependencies up to date"
+  fi
 fi
 
-# ── 4. .env file ────────────────────────────────────────────
+# ── 4. Environment (.env) ────────────────────────────────────
 if [[ ! -f ".env" ]]; then
   if [[ -f ".env.example" ]]; then
     info "No .env found — copying from .env.example"
     cp .env.example .env
-    warn ".env created from template. Open http://localhost:${PORT} to run the setup wizard."
+    warn ".env created from template. Edit it and re-run, or use the setup wizard at http://localhost:${PORT}"
+    exit 1
   else
-    warn "No .env or .env.example found. You can configure via the setup wizard at http://localhost:${PORT}"
-    touch .env
+    die ".env not found and no .env.example to copy from."
   fi
-else
-  ok ".env present"
 fi
+ok ".env present"
+
+# Load .env into environment
+set -o allexport
+source ".env"
+set +o allexport
+
+# Fallback: load Anthropic key from macOS Keychain if not set in .env
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  _kc_key=$(security find-generic-password -s "anthropic" -w 2>/dev/null || true)
+  if [[ -n "$_kc_key" ]]; then
+    export ANTHROPIC_API_KEY="$_kc_key"
+    ok "ANTHROPIC_API_KEY loaded from macOS Keychain"
+  fi
+  unset _kc_key
+fi
+
+# Provider checks (non-fatal)
+LLM_PROVIDER="${LLM_PROVIDER:-ollama}"
+info "LLM provider: $LLM_PROVIDER"
+case "$LLM_PROVIDER" in
+  ollama)
+    OLLAMA_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
+    if curl -sf --max-time 3 "$OLLAMA_URL/api/tags" &>/dev/null; then
+      ok "Ollama reachable at $OLLAMA_URL"
+    else
+      warn "Ollama not reachable at $OLLAMA_URL — start it with: ollama serve"
+    fi
+    ;;
+  anthropic)
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then ok "ANTHROPIC_API_KEY set"
+    else warn "ANTHROPIC_API_KEY not set — LLM features will fail"; fi
+    ;;
+esac
+
+if [[ -n "${JENKINS_URL:-}" ]]; then ok "Jenkins URL: $JENKINS_URL"
+else warn "JENKINS_URL not set — configure via Settings in the UI"; fi
+
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then ok "GitHub token set"
+else warn "GITHUB_TOKEN not set — Copilot commit mode disabled"; fi
 
 # ── 5. Node / npm (for UI builds) ────────────────────────────
 HAS_NODE=false
@@ -228,7 +270,7 @@ if command -v node &>/dev/null && command -v npm &>/dev/null; then
   HAS_NODE=true
   ok "Node $(node --version) / npm $(npm --version)"
 else
-  warn "Node/npm not found — UI will use pre-built assets (run --build-ui manually after installing Node)"
+  warn "Node/npm not found — UI will use pre-built assets (run --build-ui after installing Node)"
 fi
 
 # ── 6. UI build ──────────────────────────────────────────────
@@ -256,45 +298,32 @@ elif [[ ! -f "$UI_STATIC" ]]; then
     cd "$SCRIPT_DIR"
     ok "React UI built"
   else
-    die "No built UI found at $UI_STATIC and Node/npm unavailable. Run 'cd frontend && npm run build' first."
+    die "No built UI at $UI_STATIC and Node/npm unavailable. Run 'cd frontend && npm run build' first."
   fi
 else
   ok "React UI present (use --build-ui to force rebuild)"
 fi
 
-# ── 7. Ollama check (non-fatal) ──────────────────────────────
-LLM_PROVIDER=$(grep -E '^LLM_PROVIDER=' .env 2>/dev/null | cut -d= -f2 | tr -d '[:space:]"' || echo "ollama")
-if [[ "$LLM_PROVIDER" == "ollama" ]]; then
-  if curl -sf http://localhost:11434/api/tags &>/dev/null; then
-    ok "Ollama reachable"
-  else
-    warn "Ollama not reachable at localhost:11434. Start it with: ollama serve"
-    warn "Chat and analysis features will fall back to error messages until Ollama is running."
-  fi
-fi
-
-# ── 8. Port availability ─────────────────────────────────────
+# ── 7. Port check ────────────────────────────────────────────
 if lsof -iTCP:"$PORT" -sTCP:LISTEN &>/dev/null; then
-  warn "Port $PORT is already in use — attempting to stop existing server..."
+  warn "Port $PORT in use — stopping existing process..."
   PID=$(lsof -ti TCP:"$PORT" -sTCP:LISTEN | head -1)
   if [[ -n "$PID" ]]; then
     kill "$PID" 2>/dev/null && sleep 1 && ok "Stopped PID $PID"
   fi
 fi
 
-# ── 10. Launch ───────────────────────────────────────────────
+# ── 8. Launch ────────────────────────────────────────────────
 echo ""
 echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
 info "Starting server on http://localhost:${PORT}"
 echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
 echo ""
 
-# Open browser after a short delay (macOS)
 if [[ "$OPEN_BROWSER" == "true" ]]; then
   ( sleep 2 && open "http://localhost:${PORT}" 2>/dev/null || true ) &
 fi
 
-# Run uvicorn (blocking)
 exec python -m uvicorn webhook.server:app \
   --host 0.0.0.0 \
   --port "$PORT" \
