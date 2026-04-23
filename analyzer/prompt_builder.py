@@ -19,8 +19,8 @@ Response schema:
 }
 
 fix_type rules:
-- retry: transient failure, just re-run the pipeline
-- clear_cache: stale cache (Docker, npm, pip, Maven) is causing the issue
+- retry: transient failure or infrastructure issue that may resolve on re-run (Docker daemon unreachable, socket permission errors, network hiccups)
+- clear_cache: stale cache (Docker layer cache, npm, pip, Maven) is causing the issue
 - pull_image: base image is missing or outdated
 - increase_timeout: step timed out, needs longer timeout
 - configure_tool: tool name in Jenkinsfile does not match what is configured in Jenkins Global Tool Configuration — patch the Jenkinsfile to use the correct name

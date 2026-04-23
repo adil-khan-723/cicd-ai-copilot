@@ -235,14 +235,17 @@ def _detect_stages(console_log: str) -> list:
 
     result = []
     failed_seen = False
+    creds_stage: str | None = None  # last stage that used withCredentials
 
     for name, block in blocks:
+        if "withCredentials" in block:
+            creds_stage = name
+
         if failed_seen:
             result.append({"name": name, "status": "skipped"})
             continue
 
         if _SKIP_RE.search(block):
-            # Jenkins explicitly says this stage was skipped
             result.append({"name": name, "status": "skipped"})
             continue
 
@@ -251,6 +254,20 @@ def _detect_stages(console_log: str) -> list:
             failed_seen = True
         else:
             result.append({"name": name, "status": "passed"})
+
+    # Jenkins withCredentials throws after the stage block closes — the error
+    # lands in the tail of the log, not inside the block. Detect and re-attribute.
+    _CREDS_TAIL_RE = re.compile(
+        r'Could not find credentials entry with ID|CredentialsNotFoundException',
+        re.IGNORECASE,
+    )
+    if not failed_seen and creds_stage and _CREDS_TAIL_RE.search(console_log):
+        for entry in result:
+            if entry["name"] == creds_stage:
+                entry["status"] = "failed"
+                failed_seen = True
+            elif failed_seen:
+                entry["status"] = "skipped"
 
     return result
 
@@ -506,11 +523,34 @@ def _run_verification(ctx, payload: dict) -> "VerificationReport":
         jenkinsfile = payload.get("jenkinsfile", "")
         if jenkinsfile and settings.jenkins_url:
             auth = (settings.jenkins_user, settings.jenkins_token) if settings.jenkins_token else None
-            return verify_jenkins_tools(jenkinsfile, settings.jenkins_url, auth=auth)
+            report = verify_jenkins_tools(jenkinsfile, settings.jenkins_url, auth=auth)
+        else:
+            report = VerificationReport(platform="jenkins")
     except Exception as e:
         logger.warning("[verification] Failed (non-fatal): %s", e)
+        report = VerificationReport(platform="jenkins")
 
-    return VerificationReport(platform="jenkins")
+    # Fallback: parse Jenkins compile-time "did you mean" hints from console log.
+    # Jenkins reports these when a tool block references an unconfigured tool name.
+    # Pattern: Tool type "maven" does not have an install of "Maven3" — did you mean "Maven-3"?
+    if not report.mismatched_tools:
+        console_log = payload.get("log", "")
+        _DID_YOU_MEAN = re.compile(
+            r'Tool type "([^"]+)" does not have an install of "([^"]+)"[^"]*"([^"]+)"',
+            re.IGNORECASE,
+        )
+        for m in _DID_YOU_MEAN.finditer(console_log):
+            tool_type, referenced, suggested = m.group(1), m.group(2), m.group(3)
+            if suggested.lower() != "null":
+                report.mismatched_tools.append(ToolMismatch(
+                    referenced=referenced,
+                    configured=suggested,
+                    match_score=0.91,
+                ))
+                logger.info("[verification] Parsed tool mismatch from log: '%s' → '%s'",
+                            referenced, suggested)
+
+    return report
 
 
 def _summarise(payload: dict, source: str) -> str:

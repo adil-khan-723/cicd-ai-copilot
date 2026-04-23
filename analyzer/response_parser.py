@@ -7,7 +7,10 @@ import re
 
 logger = logging.getLogger(__name__)
 
-VALID_FIX_TYPES = {"retry", "clear_cache", "pull_image", "increase_timeout", "diagnostic_only"}
+VALID_FIX_TYPES = {
+    "retry", "clear_cache", "clear_npm_cache", "pull_image", "increase_timeout",
+    "configure_tool", "configure_credential", "diagnostic_only", "missing_plugin",
+}
 
 # Extracts JSON object from text that might have surrounding prose or markdown fences
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)

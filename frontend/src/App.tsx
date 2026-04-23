@@ -41,7 +41,7 @@ export default function App() {
   function checkJenkinsLiveness() {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 6000)
-    fetch('/api/health', { signal: ctrl.signal })
+    fetch('/api/health', { signal: ctrl.signal, cache: 'no-store' })
       .then(r => r.json())
       .then(data => setJenkinsStatus(data?.ok ? 'connected' : 'disconnected'))
       .catch(() => setJenkinsStatus('disconnected'))
@@ -170,7 +170,7 @@ export default function App() {
   function handleSetupSaved(repo: string) {
     setRepoName(repo)
     setSetupVisible(false)
-    setJenkinsStatus('connected')
+    checkJenkinsLiveness()
   }
 
   const allCards = Array.from(cards.values()).sort((a, b) => b.createdAt - a.createdAt)
