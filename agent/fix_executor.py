@@ -63,5 +63,9 @@ def execute_fix(fix_type: str, job_name: str, build_number: str = "0", **kwargs)
             detail=f"Unknown fix type '{fix_type}' — no executor registered.",
         )
 
-    logger.info("Executing fix '%s' for job '%s' build #%s kwargs=%s", fix_type, job_name, build_number, kwargs)
-    return executor(job_name, build_number, **kwargs)
+    logger.info("Executing fix '%s' for job '%s' build #%s kwargs_keys=%s", fix_type, job_name, build_number, list(kwargs.keys()))
+    try:
+        return executor(job_name, build_number, **kwargs)
+    except TypeError as e:
+        logger.error("Fix function signature mismatch for '%s': %s", fix_type, e)
+        return FixResult(success=False, fix_type=fix_type, detail=f"Executor signature error: {e}")
