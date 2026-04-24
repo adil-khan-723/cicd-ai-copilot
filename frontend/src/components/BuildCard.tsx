@@ -191,7 +191,23 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
           {analysis && (
             <div className="rounded-xl border border-accent-border/40 bg-overlay/30 p-4 space-y-3.5">
               <InfoBlock label="Root Cause" text={analysis.root_cause} highlight />
-              {analysis.fix_suggestion && <InfoBlock label="Suggestion" text={analysis.fix_suggestion} />}
+              {analysis.steps && analysis.steps.length > 0 ? (
+                <div>
+                  <SectionLabel>Fix Steps</SectionLabel>
+                  <ol className="space-y-1.5 mt-1">
+                    {analysis.steps.map((step, i) => (
+                      <li key={i} className="flex items-start gap-2.5 text-[13px] text-text-base leading-relaxed">
+                        <span className="shrink-0 mt-0.5 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-accent/10 border border-accent/20 text-[10px] font-mono font-semibold text-accent">
+                          {i + 1}
+                        </span>
+                        <span>{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : analysis.fix_suggestion ? (
+                <InfoBlock label="Suggestion" text={analysis.fix_suggestion} />
+              ) : null}
               {analysis.log_excerpt && (
                 <div>
                   <SectionLabel>Log Excerpt</SectionLabel>

@@ -50,6 +50,9 @@ def _validate(data: dict) -> dict:
     root_cause = str(data.get("root_cause", "")).strip()
     fix_suggestion = str(data.get("fix_suggestion", "")).strip()
 
+    raw_steps = data.get("steps", [])
+    steps = [str(s).strip() for s in raw_steps if str(s).strip()] if isinstance(raw_steps, list) else []
+
     try:
         confidence = float(data.get("confidence", 0.0))
         confidence = max(0.0, min(1.0, confidence))
@@ -71,6 +74,7 @@ def _validate(data: dict) -> dict:
     return {
         "root_cause": root_cause,
         "fix_suggestion": fix_suggestion or "Review the failed stage log manually.",
+        "steps": steps,
         "confidence": confidence,
         "fix_type": fix_type,
     }
@@ -80,6 +84,7 @@ def _fallback(reason: str) -> dict:
     return {
         "root_cause": reason,
         "fix_suggestion": "Manual review required.",
+        "steps": [],
         "confidence": 0.0,
         "fix_type": "diagnostic_only",
     }

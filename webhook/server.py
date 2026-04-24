@@ -447,6 +447,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "failed_stage": ctx.failed_stage,
             "root_cause": analysis.get("root_cause", ""),
             "fix_suggestion": analysis.get("fix_suggestion", ""),
+            "steps": analysis.get("steps", []),
             "fix_type": analysis.get("fix_type"),
             "confidence": analysis.get("confidence", 0),
             "log_excerpt": cleaned[:400],

@@ -40,6 +40,7 @@ export interface AnalysisCompleteEvent {
   failed_stage: string
   root_cause: string
   fix_suggestion: string
+  steps: string[]
   fix_type: string
   confidence: number
   log_excerpt: string
