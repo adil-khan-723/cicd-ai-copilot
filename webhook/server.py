@@ -415,10 +415,11 @@ def _process_failure_sync(payload: dict, source: str) -> None:
                 )
 
         logger.info(
-            "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s",
+            "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s steps=%d",
             analysis.get("root_cause", "")[:60],
             analysis.get("confidence", 0),
             analysis.get("fix_type"),
+            len(analysis.get("steps", [])),
         )
 
         # Determine step status: if no LLM was available, mark as failed so UI shows it clearly
