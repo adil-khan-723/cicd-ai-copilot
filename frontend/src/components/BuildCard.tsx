@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, Che
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
+import { ApplyFixModal } from './ApplyFixModal'
 import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType } from '@/types'
 
@@ -71,6 +72,7 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
   const [expanded,      setExpanded]      = useState(true)
   const [agentExpanded, setAgentExpanded] = useState(false)
   const [fixing,        setFixing]        = useState(false)
+  const [modalOpen,     setModalOpen]     = useState(false)
 
   const { analysis, fixResult, steps, dismissed } = card
   const isRunning  = !analysis && steps.some(s => s.status === 'running')
@@ -80,6 +82,7 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
 
   async function applyFix() {
     if (!analysis) return
+    setModalOpen(false)
     setFixing(true)
     try {
       const body: Record<string, string> = {
@@ -232,14 +235,12 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
               {canAutoFix ? (
                 <Button
                   size="sm"
-                  onClick={applyFix}
+                  onClick={() => setModalOpen(true)}
                   disabled={fixing}
                   className="gap-2 bg-success hover:bg-success/90 text-white font-semibold border-0 text-[13px] h-8 font-mono rounded-lg"
                 >
                   {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
-                  {analysis.fix_type === 'configure_tool' ? 'Apply Fix (Patch Tool Name)' :
-                   analysis.fix_type === 'configure_credential' ? 'Apply Fix (Create Credential)' :
-                   'Apply Fix'}
+                  {fixing ? 'Applying…' : 'Apply Fix'}
                 </Button>
               ) : (
                 <div className="flex items-center gap-2 text-[12px] text-warning font-mono">
@@ -256,6 +257,17 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
                 Dismiss
               </Button>
             </div>
+          )}
+
+          {analysis && modalOpen && (
+            <ApplyFixModal
+              open={modalOpen}
+              analysis={analysis}
+              jobName={card.job}
+              buildNumber={card.build}
+              onAccept={applyFix}
+              onCancel={() => setModalOpen(false)}
+            />
           )}
 
           {fixResult && (
