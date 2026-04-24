@@ -24,6 +24,7 @@
 - [Copilot Capabilities](#copilot-capabilities)
 - [Web UI Interface](#web-ui-interface)
 - [Security Design](#security-design)
+- [Jenkins Deployment Modes](#jenkins-deployment-modes)
 - [Configuration Reference](#configuration-reference)
 - [Build Phases & Timeline](#build-phases--timeline)
 - [Resume Value](#resume-value)
@@ -858,118 +859,146 @@ Add Jenkins user to docker group and restart.
 
 ---
 
-## Running Jenkins in Docker — Docker Socket Access
+## Jenkins Deployment Modes
 
-When Jenkins runs inside a Docker container and your Jenkinsfiles contain `docker build` or `docker push` commands, Jenkins needs access to the Docker daemon socket (`/var/run/docker.sock`).
+The agent works with Jenkins regardless of how it is installed. All core fixes (`configure_tool`, `configure_credential`, `retry_pipeline`, `clear_cache`, `increase_timeout`) use the Jenkins REST API only — no Docker dependency.
 
-### How it works
+### Mode A — Jenkins in Docker (macOS / Linux / Windows)
+
+Set in `.env`:
+```env
+JENKINS_DOCKER_CONTAINER=jenkins   # container name
+JENKINS_WORKSPACE_PATH=            # auto-detects /var/jenkins_home/workspace
+```
+
+When Jenkinsfiles contain `docker build` or `docker push`, the Jenkins container needs access to the Docker daemon socket (`/var/run/docker.sock`).
 
 ```
-Your machine (macOS / Linux / Windows)
+Your machine
 └── Docker daemon  ←── owns /var/run/docker.sock
     └── Jenkins container
         └── /var/run/docker.sock  (bind-mounted from host)
             └── Jenkinsfile: docker build ...  ──► talks to host daemon
 ```
 
-The socket is mounted into the Jenkins container. Jenkins must have read/write permission on it.
-
-### start.sh handles this automatically
-
-`./start.sh` detects a running Jenkins container and fixes socket permissions on every startup:
+`./start.sh` fixes socket permissions automatically on every startup:
 
 | Platform | Method |
 |---|---|
-| **macOS** (Docker Desktop) | `chmod 666` on the mounted socket via `docker exec` |
+| **macOS** (Docker Desktop) | `chmod 666` on mounted socket via `docker exec` |
 | **Windows** (Docker Desktop) | Same as macOS |
 | **Linux** | Adds `jenkins` user to `docker` group inside container |
 
-You do not need to run anything manually — just run `./start.sh` as normal.
-
-### Security note
-
-`chmod 666` on the Docker socket grants **any process on the system** access to the Docker daemon, which is equivalent to root access. This is acceptable for a local development machine. Do not use this approach in a shared or production environment — use Docker-in-Docker (dind) or a rootless Docker setup instead.
-
-### If you manage Jenkins outside start.sh
-
-Run once after every Docker Desktop restart:
-
+Manual fix (after Docker Desktop restart):
 ```bash
-# macOS / Windows (Docker Desktop)
+# macOS / Windows
 docker exec -u root jenkins chmod 666 /var/run/docker.sock
 
 # Linux
 docker exec -u root jenkins usermod -aG docker jenkins
 ```
 
+> **Security note:** `chmod 666` on the Docker socket is equivalent to root access for any process on the machine. Acceptable for local dev only — use Docker-in-Docker (dind) or rootless Docker in shared/production environments.
+
+---
+
+### Mode B — Jenkins bare-metal on Linux (systemd)
+
+No Docker required. Jenkins installed via `apt install jenkins` or war file, managed with `systemctl`.
+
+Set in `.env`:
+```env
+JENKINS_DOCKER_CONTAINER=          # empty = bare-metal mode
+JENKINS_WORKSPACE_PATH=            # auto-detects /var/lib/jenkins/workspace
+```
+
+The `pull_fresh_image` fix reads and writes Dockerfiles directly from `/var/lib/jenkins/workspace/<job>/` on the host filesystem instead of via `docker exec`.
+
+**One-time setup:**
+
+```bash
+# 1. Install agent dependencies
+pip install -r requirements.txt
+
+# 2. Configure .env
+cp .env.example .env
+# Set JENKINS_URL, JENKINS_USER, JENKINS_TOKEN, JENKINS_DOCKER_CONTAINER=
+
+# 3. Wire Jenkins to send build events to the agent
+./start.sh --setup-jenkins
+
+# 4. Start the agent
+./start.sh
+```
+
+**File permissions:** The agent process needs read/write access to the Jenkins workspace for the `pull_fresh_image` fix. Run the agent as the `jenkins` user, or add the agent's OS user to the `jenkins` group:
+```bash
+sudo usermod -aG jenkins <your-agent-user>
+# then restart the agent process
+```
+
+**Groovy listener persistence:** `./start.sh --setup-jenkins` detects no Docker container and skips the automatic `init.groovy.d` write. Copy the listener script manually so it survives Jenkins restarts:
+```bash
+sudo cp scripts/devops_agent_listener.groovy /var/lib/jenkins/init.groovy.d/
+sudo systemctl restart jenkins
+```
+
 ---
 
 ## Configuration Reference
 
-### .env.example
+### .env variables
 
 ```env
 # ── LLM ROUTING ──────────────────────────────────────────
+# Options: ollama | anthropic
+LLM_PROVIDER=ollama
+ANALYSIS_MODEL=llama3.1:8b
+GENERATION_MODEL=qwen2.5-coder:14b
+LLM_FALLBACK_PROVIDER=anthropic
+CONFIDENCE_THRESHOLD=0.75
 
-DEFAULT_PROVIDER=anthropic
-# Options: anthropic, ollama
-
-LOG_ANALYSIS_PROVIDER=anthropic
-LOG_ANALYSIS_MODEL=claude-haiku-4-5-20251001
-
-VERIFICATION_SUMMARY_PROVIDER=anthropic
-VERIFICATION_SUMMARY_MODEL=claude-haiku-4-5-20251001
-
-FIX_SUGGESTION_PROVIDER=anthropic
-FIX_SUGGESTION_MODEL=claude-haiku-4-5-20251001
-
-PIPELINE_GENERATION_PROVIDER=anthropic
-PIPELINE_GENERATION_MODEL=claude-sonnet-4-6
-
-# ── CONFIDENCE THRESHOLD ─────────────────────────────────
-
-MIN_CONFIDENCE_FOR_EXECUTE=high
-# Options: high, medium, low
-
-# ── PROVIDER CREDENTIALS ─────────────────────────────────
-
-ANTHROPIC_API_KEY=sk-ant-...
-
+# ── OLLAMA ────────────────────────────────────────────────
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_DEFAULT_MODEL=llama3.1:8b
-OLLAMA_MODELS=/Volumes/YourSSD/ollama-models
+OLLAMA_MODELS=/Volumes/SSD/ollama-models
+OLLAMA_TIMEOUT=120
+
+# ── ANTHROPIC ────────────────────────────────────────────
+ANTHROPIC_API_KEY=                        # required when LLM_PROVIDER=anthropic
+ANTHROPIC_ANALYSIS_MODEL=claude-haiku-4-5-20251001
+ANTHROPIC_GENERATION_MODEL=claude-sonnet-4-6
 
 # ── JENKINS ──────────────────────────────────────────────
-
 JENKINS_URL=http://localhost:8080
 JENKINS_USER=admin
 JENKINS_TOKEN=your_jenkins_api_token
 
+# Docker container name — set to empty string for bare-metal / systemd Jenkins
+JENKINS_DOCKER_CONTAINER=jenkins
+
+# Absolute path to Jenkins workspace root. Leave empty for auto-detection:
+#   Docker mode:          /var/jenkins_home/workspace
+#   Bare-metal Linux:     /var/lib/jenkins/workspace
+JENKINS_WORKSPACE_PATH=
+
 # ── GITHUB ───────────────────────────────────────────────
-
 GITHUB_TOKEN=ghp_...
-GITHUB_REPO_OWNER=adil-khan-723
-GITHUB_DEFAULT_BRANCH=main
-
-# ── AWS ──────────────────────────────────────────────────
-
-AWS_DEFAULT_REGION=ap-south-1
-ECR_REGISTRY=your_account_id.dkr.ecr.ap-south-1.amazonaws.com
-
-# ── CACHING ──────────────────────────────────────────────
-
-CACHE_ENABLED=true
-CACHE_TTL_SECONDS=3600
+GITHUB_ORG=your-org
+GITHUB_DEFAULT_REPO=owner/repo
 
 # ── WEBHOOK SERVER ────────────────────────────────────────
-
 WEBHOOK_PORT=8000
-WEBHOOK_SECRET=your_webhook_secret
+WEBHOOK_SECRET=
+WEBHOOK_HOST=0.0.0.0
+
+# ── CACHING ──────────────────────────────────────────────
+CACHE_TTL=3600
+REDIS_URL=
 
 # ── LOGGING ──────────────────────────────────────────────
-
+# Options: DEBUG | INFO | WARNING | ERROR
 LOG_LEVEL=INFO
-AUDIT_LOG_PATH=./logs/audit.log
+AUDIT_LOG_PATH=audit.log
 ```
 
 ---
