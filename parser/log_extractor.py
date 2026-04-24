@@ -98,7 +98,29 @@ def _extract_github_step_block(log: str, failed_step: str) -> str:
 
 
 def _tail(text: str, max_chars: int) -> str:
-    """Return the last max_chars characters of text."""
+    """
+    Return the most relevant portion of text within max_chars.
+
+    Prefers content anchored at the FIRST error line rather than the tail,
+    so that pre-stage errors (NoSuchMethodError, CPS compile failures) are
+    preserved instead of being displaced by a deep stack trace tail.
+    """
     if len(text) <= max_chars:
         return text
+
+    # Find the first line that looks like a meaningful error signal
+    _ERROR_ANCHOR = re.compile(
+        r'(No such DSL method|NoSuchMethodError|ERROR:|error:|FAILED|Exception:|Caused by:)',
+        re.IGNORECASE,
+    )
+    m = _ERROR_ANCHOR.search(text)
+    if m:
+        # Start a bit before the error line for context (up to 200 chars back)
+        start = max(0, m.start() - 200)
+        chunk = text[start:start + max_chars]
+        prefix = "...[truncated]\n" if start > 0 else ""
+        suffix = "\n...[truncated]" if start + max_chars < len(text) else ""
+        return prefix + chunk + suffix
+
+    # No anchor found — fall back to tail
     return "...[truncated]\n" + text[-max_chars:]
