@@ -250,10 +250,15 @@ def configure_credential(
     credential_id: str = "",
 ) -> FixResult:
     """
-    Create a placeholder username/password credential in Jenkins global store
+    Create a placeholder username/password credential in Jenkins global system store
     with the given credential_id so the Jenkinsfile reference resolves.
     Credentials are created empty — operator must update values in Jenkins UI.
+
+    Uses direct HTTP POST to /credentials/store/system/domain/_/createCredentials
+    because python-jenkins create_credential() targets folder stores, not the system store.
     """
+    import requests
+
     if not credential_id:
         return FixResult(
             success=False,
@@ -261,7 +266,9 @@ def configure_credential(
             detail="No credential_id provided.",
         )
     try:
+        s = get_settings()
         server = _get_jenkins_server()
+
         cred_xml = (
             "<com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>"
             "<scope>GLOBAL</scope>"
@@ -271,7 +278,27 @@ def configure_credential(
             f"<description>Auto-created by DevOps AI Agent (job: {job_name}). Update credentials in Jenkins UI.</description>"
             "</com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>"
         )
-        server.create_credential("_", cred_xml)
+
+        # Get crumb for CSRF protection
+        crumb_url = f"{s.jenkins_url}/crumbIssuer/api/json"
+        crumb_resp = requests.get(crumb_url, auth=(s.jenkins_user, s.jenkins_token), timeout=10)
+        crumb_resp.raise_for_status()
+        crumb_data = crumb_resp.json()
+        crumb_header = {crumb_data["crumbRequestField"]: crumb_data["crumb"]}
+
+        create_url = f"{s.jenkins_url}/credentials/store/system/domain/_/createCredentials"
+        resp = requests.post(
+            create_url,
+            data=cred_xml.encode("utf-8"),
+            headers={"Content-Type": "application/xml", **crumb_header},
+            auth=(s.jenkins_user, s.jenkins_token),
+            timeout=10,
+        )
+        if resp.status_code not in (200, 201, 302):
+            raise jenkins.JenkinsException(
+                f"Credential creation returned HTTP {resp.status_code}: {resp.text[:200]}"
+            )
+
         server.build_job(job_name)
         logger.info("configure_credential: created '%s' for job %s, retriggered", credential_id, job_name)
         return FixResult(
@@ -283,4 +310,5 @@ def configure_credential(
         logger.error("configure_credential failed for %s: %s", job_name, e)
         return FixResult(success=False, fix_type="configure_credential", detail=str(e))
     except Exception as e:
+        logger.error("configure_credential unexpected error for %s: %s", job_name, e)
         return FixResult(success=False, fix_type="configure_credential", detail=f"Unexpected error: {e}")

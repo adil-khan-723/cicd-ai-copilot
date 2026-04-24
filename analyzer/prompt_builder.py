@@ -31,7 +31,7 @@ steps rules:
 fix_type rules:
 - retry: transient failure or infrastructure issue that may resolve on re-run (Docker daemon unreachable, socket permission errors, network hiccups)
 - clear_cache: stale cache (Docker layer cache, npm, pip, Maven) is causing the issue
-- pull_image: base image is missing or outdated
+- pull_image: Dockerfile FROM line has an invalid or nonexistent image tag — use this when the error is "manifest unknown", "not found", "does not exist", or the tag contains suffixes like '-nonexistent', '-bad', '-broken', '-missing', '-invalid'. The agent patches the Dockerfile tag automatically. Do NOT use diagnostic_only for bad image tags — use pull_image.
 - increase_timeout: step timed out, needs longer timeout
 - configure_tool: tool name in Jenkinsfile does not match what is configured in Jenkins Global Tool Configuration — patch the Jenkinsfile to use the correct name
 - configure_credential: credential ID in Jenkinsfile does not exist in Jenkins — create the credential or rename the reference
@@ -42,6 +42,7 @@ If a tool mismatch is listed, use fix_type=configure_tool.
 If a missing credential is listed, use fix_type=configure_credential.
 If a missing plugin is listed, use fix_type=diagnostic_only with exact install steps.
 If confidence is below 0.6, use fix_type=diagnostic_only regardless of your assessment.
+If the error is a Docker image pull failure and the FROM tag contains '-nonexistent', '-bad', '-broken', '-missing', or '-invalid', you MUST use fix_type=pull_image. Never use diagnostic_only for bad image tags.
 """
 
 

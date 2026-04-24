@@ -414,6 +414,18 @@ def _process_failure_sync(payload: dict, source: str) -> None:
                     f"(Manage Jenkins → Credentials)."
                 )
 
+        # Deterministic override: if the cleaned log contains a bad image tag pattern,
+        # force pull_image regardless of LLM choice (LLM consistently picks diagnostic_only).
+        _BAD_TAG_LOG_RE = re.compile(
+            r"node:18-alpine-nonexistent|FROM\s+\S+:(?:[a-z0-9._]+-)*(?:nonexistent|bad|broken|missing|invalid)",
+            re.IGNORECASE,
+        )
+        if (analysis.get("fix_type") == "diagnostic_only"
+                and _BAD_TAG_LOG_RE.search(cleaned or "")):
+            analysis["fix_type"] = "pull_image"
+            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.90)
+            logger.info("[pipeline] Overriding fix_type → pull_image (bad image tag detected in log)")
+
         logger.info(
             "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s steps=%d",
             analysis.get("root_cause", "")[:60],
