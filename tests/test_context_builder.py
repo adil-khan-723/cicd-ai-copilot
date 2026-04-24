@@ -1,8 +1,8 @@
-"""Tests for Context Builder (Increment 14)."""
+"""Tests for Context Builder."""
 import pytest
 from parser.models import FailureContext
 from verification.models import VerificationReport, ToolMismatch
-from analyzer.context_builder import build_context, count_tokens, TOTAL_BUDGET
+from analyzer.context_builder import build_context, count_tokens, TOTAL_BUDGET, _extract_stage_block
 
 
 def make_context(**kwargs) -> FailureContext:
@@ -88,10 +88,113 @@ class TestBuildContext:
     def test_token_count_stays_within_budget_with_all_fields(self):
         ctx = make_context(repo="adil-khan-723/cicd-ai-copilot", branch="feature/something-long")
         report = make_report_with_issues()
-        # Add many issues
         for i in range(10):
             report.missing_credentials.append(f"CRED_{i}")
         big_log = "Step failed: " * 300
         result = build_context(big_log, report, ctx)
         tokens = count_tokens(result)
         assert tokens <= TOTAL_BUDGET, f"Context used {tokens} tokens"
+
+
+SAMPLE_JENKINSFILE = """
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                sh 'mvn package'
+                echo 'Build done'
+            }
+        }
+        stage('Test') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+        stage('Deploy') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds')]) {
+                    sh 'docker push myapp'
+                }
+            }
+        }
+    }
+}
+"""
+
+TYPO_JENKINSFILE = """
+pipeline {
+    agent any
+    stages {
+        stage('Hello') {
+            steps {
+                echo1 'Hello World'
+            }
+        }
+    }
+}
+"""
+
+
+class TestExtractStageBlock:
+    def test_extracts_exact_stage(self):
+        block = _extract_stage_block(SAMPLE_JENKINSFILE, "Build")
+        assert "stage('Build')" in block
+        assert "mvn package" in block
+        assert "mvn test" not in block  # shouldn't bleed into Test stage
+
+    def test_extracts_nested_stage(self):
+        block = _extract_stage_block(SAMPLE_JENKINSFILE, "Deploy")
+        assert "withCredentials" in block
+        assert "docker push" in block
+
+    def test_returns_empty_when_stage_not_found(self):
+        block = _extract_stage_block(SAMPLE_JENKINSFILE, "Nonexistent")
+        assert block == ""
+
+    def test_returns_empty_when_jenkinsfile_empty(self):
+        assert _extract_stage_block("", "Build") == ""
+
+    def test_case_insensitive_match(self):
+        block = _extract_stage_block(SAMPLE_JENKINSFILE, "build")
+        assert "mvn package" in block
+
+    def test_typo_stage_extracted(self):
+        block = _extract_stage_block(TYPO_JENKINSFILE, "Hello")
+        assert "echo1" in block
+
+
+class TestBuildContextWithStageSnippet:
+    def test_includes_stage_snippet_when_jenkinsfile_provided(self):
+        ctx = make_context(failed_stage="Build")
+        result = build_context("log", None, ctx, jenkinsfile=SAMPLE_JENKINSFILE)
+        assert "Failing Stage Source" in result
+        assert "mvn package" in result
+
+    def test_excludes_other_stages(self):
+        ctx = make_context(failed_stage="Build")
+        result = build_context("log", None, ctx, jenkinsfile=SAMPLE_JENKINSFILE)
+        assert "mvn test" not in result
+
+    def test_no_snippet_when_no_jenkinsfile(self):
+        ctx = make_context(failed_stage="Build")
+        result = build_context("log", None, ctx)
+        assert "Failing Stage Source" not in result
+
+    def test_no_snippet_when_stage_not_found(self):
+        ctx = make_context(failed_stage="Nonexistent")
+        result = build_context("log", None, ctx, jenkinsfile=SAMPLE_JENKINSFILE)
+        assert "Failing Stage Source" not in result
+
+    def test_typo_step_visible_to_llm(self):
+        ctx = make_context(failed_stage="Hello")
+        result = build_context("ERROR: No such DSL method", None, ctx, jenkinsfile=TYPO_JENKINSFILE)
+        assert "echo1" in result
+
+    def test_token_budget_respected_with_snippet(self):
+        ctx = make_context(failed_stage="Build", repo="org/repo", branch="main")
+        report = make_report_with_issues()
+        big_log = "ERROR line\n" * 300
+        result = build_context(big_log, report, ctx, jenkinsfile=SAMPLE_JENKINSFILE)
+        tokens = count_tokens(result)
+        assert tokens <= TOTAL_BUDGET, f"Context used {tokens} tokens, budget is {TOTAL_BUDGET}"

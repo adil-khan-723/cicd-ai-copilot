@@ -389,7 +389,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "type": "step", "job": ctx.job_name, "build": ctx.build_number,
             "stage": "CONTEXT_BUILT", "detail": "sending to LLM...", "status": "running",
         })
-        context_str = build_context(cleaned, report, ctx)
+        context_str = build_context(cleaned, report, ctx, jenkinsfile=payload.get("jenkinsfile", ""))
         analysis = analyze(context_str)  # always returns a dict — never raises
 
         # Verification facts override LLM guess — crawler findings are deterministic,

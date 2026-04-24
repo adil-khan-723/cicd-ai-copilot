@@ -172,10 +172,10 @@ Stage 5:    FAIL ❌
 │                                         │
 │  Merges into single optimized payload:  │
 │  - Cleaned failed stage logs (~300 tok) │
-│  - Failed stage pipeline syntax (~200)  │
+│  - Failing stage Groovy source (~150)   │
 │  - Tool verification report (~200 tok)  │
 │                                         │
-│  Total: ~850 tokens (not 10,000+)       │
+│  Total: ~1000 tokens (not 10,000+)      │
 └──────────────────┬──────────────────────┘
                    ↓
 ┌─────────────────────────────────────────┐
@@ -262,7 +262,7 @@ If approved:
 ## Architecture Decisions & Optimizations
 
 ### Token Optimization — 90% Reduction
-A full 8-stage pipeline can generate 10,000+ tokens of logs. By parsing the result first and extracting only the failed stage, the context sent to the LLM drops to approximately 850 tokens. This is the single most impactful optimization in the project.
+A full 8-stage pipeline can generate 10,000+ tokens of logs. By parsing the result first and extracting only the failed stage, the context sent to the LLM drops to approximately 1000 tokens. This is the single most impactful optimization in the project.
 
 ### Deterministic Verification First
 Tool configuration checks are intentionally done without the LLM. A crawler queries the Jenkins API or GitHub API and returns verified facts. The LLM then has accurate information instead of having to infer it from error messages — which leads to hallucination.
@@ -548,7 +548,7 @@ Second — queries the Jenkins REST API to verify each reference against what is
 Same concept for GitHub Actions. Parses workflow YAML to extract all secrets references, runner labels, action uses, and environment variables. Queries GitHub API to verify each one exists and is configured.
 
 ### analyzer/context_builder.py
-Merges three inputs into a single optimized LLM payload: cleaned failed stage logs (~300 tokens), failed stage pipeline syntax (~200 tokens), tool verification report (~200 tokens). Total approximately 850 tokens regardless of full pipeline size.
+Merges four inputs into a single optimized LLM payload: cleaned failed stage logs (~300 tokens), failing stage Groovy source (~150 tokens), tool verification report (~200 tokens), metadata (~50 tokens). Total approximately 1000 tokens regardless of full pipeline size. The stage source block gives the LLM ground truth to detect typos, invalid DSL steps, and misconfigurations directly from the Jenkinsfile rather than inferring from log output alone.
 
 ### analyzer/cache.py
 MD5 hash of the combined context used as cache key. Same failure signature returns cached response at zero cost.
@@ -679,10 +679,11 @@ Total disk: ~29GB across all models.
 | Component | Tokens |
 |---|---|
 | Cleaned failed stage logs | ~300 |
-| Failed stage pipeline syntax | ~200 |
+| Failing stage Groovy source | ~150 |
 | Tool verification report | ~200 |
+| Metadata + separators | ~50 |
 | Prompt instructions | ~150 |
-| Total input | ~850 |
+| Total input | ~1000 |
 | LLM output | ~400 |
 
 Compare to feeding full pipeline: 10,000+ tokens. 90% reduction.
@@ -1048,7 +1049,7 @@ Built an AI-powered CI/CD Copilot using local and cloud LLMs (Ollama/Llama 3.1, 
 ### Key interview talking points
 
 **On selective context feeding:**
-Instead of feeding the entire pipeline log to the LLM, I parse the result first and only send the failed stage — about 850 tokens instead of 10,000 plus. That is a 90% token reduction with better accuracy because the LLM is not distracted by passing stage noise.
+Instead of feeding the entire pipeline log to the LLM, I parse the result first and only send the failed stage — about 1000 tokens instead of 10,000 plus. That is a 90% token reduction with better accuracy because the LLM is not distracted by passing stage noise.
 
 **On the tool verification crawler:**
 One of the most common CI/CD failures is a tool name mismatch — the Jenkinsfile references a tool name that does not exactly match what is configured in Jenkins Global Tool Configuration. My crawler detects this deterministically before calling the LLM by parsing the Jenkinsfile, querying the Jenkins API, and running exact plus fuzzy match comparison. The LLM receives verified facts instead of guessing from confusing error messages. This eliminates an entire category of hallucination.

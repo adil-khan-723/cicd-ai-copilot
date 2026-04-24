@@ -43,6 +43,11 @@ If a missing credential is listed, use fix_type=configure_credential.
 If a missing plugin is listed, use fix_type=diagnostic_only with exact install steps.
 If confidence is below 0.6, use fix_type=diagnostic_only regardless of your assessment.
 If the error is a Docker image pull failure and the FROM tag contains '-nonexistent', '-bad', '-broken', '-missing', or '-invalid', you MUST use fix_type=pull_image. Never use diagnostic_only for bad image tags.
+
+Failing Stage Source (if present) is the EXACT Groovy code from the Jenkinsfile for the failing stage — treat it as ground truth.
+- If a step name in the source does not exist as a valid Jenkins DSL step (e.g. echo1, sh2, bat1), identify it as a typo in root_cause and name the correct step in your fix steps.
+- If a tool name in the source does not match Verification Findings, use fix_type=configure_tool.
+- If a credentialsId in the source is not in Verification Findings as configured, use fix_type=configure_credential.
 """
 
 
