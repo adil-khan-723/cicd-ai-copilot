@@ -9,16 +9,27 @@ _LOG_PREFIXES = re.compile(r"^\s*\[(INFO|DEBUG|TRACE|Pipeline|Checks|Declarative
 _PROGRESS_BAR = re.compile(r"[#=\-]{10,}")
 _BLANK_LINES = re.compile(r"\n{3,}")
 
+# Jenkins DSL error: "No such DSL method 'X' found among steps [archive, bat, ...]"
+# The step list can be thousands of chars — strip it, keep only the method name.
+_DSL_STEP_LIST = re.compile(
+    r"(No such DSL method '[^']+' found among steps) \[[\w, ]+\](?: or symbols \[[\w, \-]+\])?",
+    re.DOTALL,
+)
+
 
 def clean_log(raw: str) -> str:
     """
     Strip noise from extracted stage logs before sending to the LLM.
-    Removes: ANSI codes, timestamps, INFO/DEBUG prefixes, progress bars, excess blank lines.
+    Removes: ANSI codes, timestamps, INFO/DEBUG prefixes, progress bars,
+    excess blank lines, and verbose Jenkins DSL step/symbol enumerations.
     """
     text = raw
 
     # Strip ANSI escape sequences first
     text = _ANSI.sub("", text)
+
+    # Collapse verbose Jenkins DSL step/symbol list to just the error headline
+    text = _DSL_STEP_LIST.sub(r"\1 [...]", text)
 
     # Strip timestamps
     text = _TIMESTAMP_FULL.sub("", text)

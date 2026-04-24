@@ -414,8 +414,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
                     f"(Manage Jenkins → Credentials)."
                 )
 
-        # Deterministic override: if the cleaned log contains a bad image tag pattern,
-        # force pull_image regardless of LLM choice (LLM consistently picks diagnostic_only).
+        # Deterministic override: bad Docker image tag → pull_image
         _BAD_TAG_LOG_RE = re.compile(
             r"node:18-alpine-nonexistent|FROM\s+\S+:(?:[a-z0-9._]+-)*(?:nonexistent|bad|broken|missing|invalid)",
             re.IGNORECASE,
@@ -425,6 +424,24 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             analysis["fix_type"] = "pull_image"
             analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.90)
             logger.info("[pipeline] Overriding fix_type → pull_image (bad image tag detected in log)")
+
+        # Deterministic override: invalid DSL method name detected in log
+        # Jenkins error "No such DSL method 'X'" = definite typo in Jenkinsfile.
+        # LLM often gives low confidence because the CPS stack trace looks ambiguous.
+        # We know for certain what the error is — boost confidence so Apply Fix is shown.
+        _DSL_METHOD_RE = re.compile(r"No such DSL method '([^']+)'", re.IGNORECASE)
+        dsl_match = _DSL_METHOD_RE.search(cleaned or "")
+        if dsl_match:
+            bad_step = dsl_match.group(1)
+            if analysis.get("confidence", 1.0) < 0.75:
+                analysis["confidence"] = 0.75
+                logger.info("[pipeline] Boosted confidence to 0.75 (invalid DSL step '%s' confirmed in log)", bad_step)
+            # Ensure root cause names the bad step explicitly
+            if bad_step not in analysis.get("root_cause", ""):
+                analysis["root_cause"] = (
+                    f"The Jenkinsfile uses an invalid DSL step name '{bad_step}' which does not exist. "
+                    + analysis.get("root_cause", "")
+                ).strip()
 
         logger.info(
             "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s steps=%d",
