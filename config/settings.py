@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     jenkins_url: str = Field(default="http://localhost:8080")
     jenkins_user: str = Field(default="admin")
     jenkins_token: str = Field(default="")
+    # Set to container name (e.g. "jenkins") when Jenkins runs in Docker.
+    # Set to "" for bare-metal / systemd Jenkins — workspace accessed directly.
+    jenkins_docker_container: str = Field(default="jenkins")
+    # Absolute path to Jenkins workspace root on the host (or inside the container).
+    # Auto-detected when empty: /var/lib/jenkins/workspace (Linux bare-metal)
+    # or /var/jenkins_home/workspace (Docker container default).
+    jenkins_workspace_path: str = Field(default="")
 
     # Webhook
     webhook_port: int = Field(default=8000)
