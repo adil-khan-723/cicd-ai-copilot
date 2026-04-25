@@ -254,6 +254,8 @@ class FixPayload(BaseModel):
     referenced_name: Optional[str] = None
     configured_name: Optional[str] = None
     credential_id: Optional[str] = None
+    bad_step: Optional[str] = None
+    correct_step: Optional[str] = None
 
 
 @router.post("/api/fix")
@@ -269,6 +271,10 @@ async def fix(payload: FixPayload):
         kwargs["configured_name"] = payload.configured_name
     if payload.credential_id:
         kwargs["credential_id"] = payload.credential_id
+    if payload.bad_step:
+        kwargs["bad_step"] = payload.bad_step
+    if payload.correct_step:
+        kwargs["correct_step"] = payload.correct_step
 
     # Fallback: for configure_tool with missing names, parse from console log
     if payload.fix_type == "configure_tool" and (not kwargs.get("referenced_name") or not kwargs.get("configured_name")):

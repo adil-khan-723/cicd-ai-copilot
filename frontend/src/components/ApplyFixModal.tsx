@@ -17,6 +17,14 @@ const FIX_META: Record<string, {
   badgeClass: string
   agentNote: string
 }> = {
+  fix_step_typo: {
+    label: 'Fix Invalid DSL Step',
+    icon: <Wrench className="h-5 w-5" strokeWidth={1.8} />,
+    accentClass: 'text-accent',
+    barClass: 'from-accent via-accent/30 to-transparent',
+    badgeClass: 'bg-accent-dim border-accent-border text-accent',
+    agentNote: 'Agent will patch the Jenkinsfile in Jenkins job config and retrigger',
+  },
   configure_credential: {
     label: 'Create Missing Credential',
     icon: <KeyRound className="h-5 w-5" strokeWidth={1.8} />,
@@ -295,6 +303,7 @@ function getStepZeroBg(fixType: string) {
   const map: Record<string, string> = {
     configure_credential: 'bg-[#2e6da0]',
     configure_tool:       'bg-accent',
+    fix_step_typo:        'bg-accent',
     pull_image:           'bg-[#7b5ea7]',
     clear_cache:          'bg-warning',
     retry:                'bg-success',
@@ -307,6 +316,7 @@ function getAcceptBtnClass(fixType: string) {
   const map: Record<string, string> = {
     configure_credential: 'bg-[#2e6da0] hover:bg-[#265d8c]',
     configure_tool:       'bg-accent hover:bg-accent-hi',
+    fix_step_typo:        'bg-accent hover:bg-accent-hi',
     pull_image:           'bg-[#7b5ea7] hover:bg-[#6a4e94]',
     clear_cache:          'bg-warning hover:bg-[#9a6c22]',
     retry:                'bg-success hover:bg-[#246b50]',

@@ -172,6 +172,37 @@ _STAGE_ERROR_RE = re.compile(
 _SKIP_RE = re.compile(r'Stage ".+?" skipped due to earlier failure', re.IGNORECASE)
 
 
+def _extract_correct_step(bad_step: str, analysis: dict) -> str:
+    """
+    Infer the correct DSL step name from LLM analysis text or by stripping
+    trailing digits/noise from the bad step name.
+
+    Priority:
+    1. Parse LLM root_cause/steps for "correct step (name) is 'X'" pattern
+    2. Strip trailing digits from bad_step (echo1→echo, sh2→sh, bat1→bat)
+    3. Return empty string (caller falls back to diagnostic_only)
+    """
+    combined = " ".join([
+        analysis.get("root_cause", ""),
+        analysis.get("fix_suggestion", ""),
+        *analysis.get("steps", []),
+    ])
+    # Pattern: "correct step is 'echo'" or "replace with 'echo'" or "use 'echo'"
+    m = re.search(
+        r"(?:correct step(?:\s+name)?\s+is|replace\s+\w+\s+with|use\s+step)\s+['\"](\w+)['\"]",
+        combined, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+
+    # Strip trailing digits/noise: echo1 → echo, sh2 → sh, bat99 → bat
+    stripped = re.sub(r'\d+$', '', bad_step)
+    if stripped and stripped != bad_step:
+        return stripped
+
+    return ""
+
+
 def _slice_log(log: str, max_chars: int) -> str:
     """
     Return up to max_chars of the log, anchored at the first error line.
@@ -452,25 +483,28 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         dsl_match = _DSL_METHOD_RE.search(cleaned or "")
         if dsl_match:
             bad_step = dsl_match.group(1)
-            # Force diagnostic_only — agent cannot safely auto-patch arbitrary step
-            # name typos (no way to know the intended correct step name programmatically).
-            # configure_tool is wrong here; that handler requires verification mismatch data.
-            analysis["fix_type"] = "diagnostic_only"
-            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.90)
-            # Ensure root cause and steps name the bad step explicitly
-            if bad_step not in analysis.get("root_cause", ""):
-                analysis["root_cause"] = (
-                    f"The Jenkinsfile uses an invalid DSL step name '{bad_step}' which does not exist. "
-                    + analysis.get("root_cause", "")
-                ).strip()
-            # Overwrite steps with precise manual instructions
+            # Extract the correct step name from LLM root_cause/steps text.
+            # LLM reliably phrases it as: "correct step is 'X'" or "correct step name is 'X'"
+            # or "replace ... with 'X'". Fall back to stripping trailing digits.
+            correct_step = _extract_correct_step(bad_step, analysis)
+
+            analysis["fix_type"] = "fix_step_typo"
+            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.92)
+            analysis["bad_step"] = bad_step
+            analysis["correct_step"] = correct_step
+
+            root_cause = f"The Jenkinsfile uses an invalid DSL step name '{bad_step}' which does not exist."
+            if correct_step:
+                root_cause += f" The correct step is '{correct_step}'."
+            analysis["root_cause"] = root_cause
+
             analysis["steps"] = [
-                f"Open the job '{payload.get('job_name', 'unknown')}' in Jenkins → Pipeline configuration",
-                f"Find the line containing '{bad_step}' in the Jenkinsfile and replace it with the correct DSL step (e.g. 'echo', 'sh', 'bat')",
-                "Commit and push the corrected Jenkinsfile to the repository",
-                "Trigger a new build to verify the fix",
+                f"Agent will patch the Jenkinsfile: replace '{bad_step}' with '{correct_step}' and reconfigure the job" if correct_step
+                else f"Agent will remove the trailing characters from '{bad_step}' in the Jenkinsfile",
+                f"Job '{payload.get('job_name', 'unknown')}' will be retriggered automatically after the patch",
+                "Verify the new build passes — if it fails again, check for other syntax errors",
             ]
-            logger.info("[pipeline] DSL typo '%s' detected — forced diagnostic_only with manual steps", bad_step)
+            logger.info("[pipeline] DSL typo '%s' → '%s' — fix_step_typo", bad_step, correct_step)
 
         logger.info(
             "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s steps=%d",
@@ -510,6 +544,8 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "fix_type": analysis.get("fix_type"),
             "confidence": analysis.get("confidence", 0),
             "log_excerpt": cleaned[:400],
+            "bad_step": analysis.get("bad_step"),
+            "correct_step": analysis.get("correct_step"),
             "pipeline_stages": [
                 {"name": name, "status": status}
                 for name, status in ctx.pipeline_stages

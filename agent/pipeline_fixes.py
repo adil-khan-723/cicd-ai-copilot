@@ -244,6 +244,59 @@ def configure_tool(
         return FixResult(success=False, fix_type="configure_tool", detail=f"Unexpected error: {e}")
 
 
+def fix_step_typo(
+    job_name: str,
+    build_number: str = "0",
+    bad_step: str = "",
+    correct_step: str = "",
+) -> FixResult:
+    """
+    Patch the Jenkinsfile stored in the job's config XML: replace every occurrence
+    of the invalid DSL step name with the correct one, then reconfig and retrigger.
+
+    Handles both plain-text (`bad_step 'arg'`) and XML-escaped (`&quot;`) forms.
+    Works regardless of which stage contains the typo — scans the whole Jenkinsfile.
+    """
+    if not bad_step or not correct_step:
+        return FixResult(
+            success=False,
+            fix_type="fix_step_typo",
+            detail="Missing bad_step or correct_step — cannot patch.",
+        )
+    try:
+        server = _get_jenkins_server()
+        config_xml = server.get_job_config(job_name)
+
+        # Match the bad step as a word boundary so e.g. "echo1" doesn't match "echo"
+        # Handle both raw and XML-escaped quote variants around the step argument
+        pattern = re.compile(
+            r'\b' + re.escape(bad_step) + r'\b',
+        )
+        new_xml, count = pattern.subn(correct_step, config_xml)
+
+        if count == 0:
+            return FixResult(
+                success=False,
+                fix_type="fix_step_typo",
+                detail=f"Step '{bad_step}' not found in job config XML.",
+            )
+
+        server.reconfig_job(job_name, new_xml)
+        server.build_job(job_name)
+        logger.info("fix_step_typo: patched %s: '%s' → '%s' (%d occurrence(s)), retriggered", job_name, bad_step, correct_step, count)
+        return FixResult(
+            success=True,
+            fix_type="fix_step_typo",
+            detail=f"Jenkinsfile patched: '{bad_step}' → '{correct_step}' ({count} occurrence(s)). Job reconfigured and retriggered.",
+        )
+    except jenkins.JenkinsException as e:
+        logger.error("fix_step_typo failed for %s: %s", job_name, e)
+        return FixResult(success=False, fix_type="fix_step_typo", detail=str(e))
+    except Exception as e:
+        logger.error("fix_step_typo unexpected error for %s: %s", job_name, e)
+        return FixResult(success=False, fix_type="fix_step_typo", detail=f"Unexpected error: {e}")
+
+
 def configure_credential(
     job_name: str,
     build_number: str = "0",

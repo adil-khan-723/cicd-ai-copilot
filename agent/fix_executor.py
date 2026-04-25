@@ -14,6 +14,7 @@ from agent.pipeline_fixes import (
     increase_timeout,
     configure_tool,
     configure_credential,
+    fix_step_typo,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ _FIX_MAP = {
     "increase_timeout": increase_timeout,
     "configure_tool": configure_tool,
     "configure_credential": configure_credential,
+    "fix_step_typo": fix_step_typo,
 }
 
 # These fix types must never be auto-executed — always diagnostic

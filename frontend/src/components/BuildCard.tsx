@@ -101,6 +101,11 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
         body.credential_id = analysis.verification.missing_credentials[0]
       }
 
+      if (analysis.fix_type === 'fix_step_typo') {
+        if (analysis.bad_step)    body.bad_step    = analysis.bad_step
+        if (analysis.correct_step) body.correct_step = analysis.correct_step
+      }
+
       await fetch('/api/fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

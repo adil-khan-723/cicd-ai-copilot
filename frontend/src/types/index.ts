@@ -46,6 +46,8 @@ export interface AnalysisCompleteEvent {
   log_excerpt: string
   pipeline_stages: PipelineStage[]
   verification?: VerificationData
+  bad_step?: string
+  correct_step?: string
 }
 
 export interface FixResultEvent {
