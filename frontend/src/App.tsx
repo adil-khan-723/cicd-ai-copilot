@@ -103,7 +103,7 @@ export default function App() {
       setCards(prev => {
         const next = new Map(prev)
         const existing = next.get(key)
-        if (existing) next.set(key, { ...existing, analysis: event })
+        if (existing) next.set(key, { ...existing, analysis: event, fixResult: undefined })
         return next
       })
     }
