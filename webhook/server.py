@@ -119,7 +119,7 @@ def _process_notification_failure_sync(job: str, build: str, payload: dict) -> N
         "failed_stage": _detect_failed_stage(console_log),
         "status":       "FAILURE",
         "stages":       _detect_stages(console_log),
-        "log":          console_log[-8000:] if console_log else "No log available",
+        "log":          _slice_log(console_log, 8000) if console_log else "No log available",
         "jenkinsfile":  jenkinsfile,
     }
 
@@ -170,6 +170,25 @@ _STAGE_ERROR_RE = re.compile(
 )
 # Jenkins declarative: stage was skipped because an earlier stage failed
 _SKIP_RE = re.compile(r'Stage ".+?" skipped due to earlier failure', re.IGNORECASE)
+
+
+def _slice_log(log: str, max_chars: int) -> str:
+    """
+    Return up to max_chars of the log, anchored at the first error line.
+    Prevents pre-stage errors (NoSuchMethodError, CPS compile failures) from
+    being discarded when the log is truncated from the tail.
+    """
+    if len(log) <= max_chars:
+        return log
+    _anchor = re.compile(
+        r'(No such DSL method|NoSuchMethodError|ERROR:|error:|FAILED|Exception:|Caused by:)',
+        re.IGNORECASE,
+    )
+    m = _anchor.search(log)
+    if m:
+        start = max(0, m.start() - 500)
+        return ("...[truncated]\n" if start > 0 else "") + log[start:start + max_chars]
+    return log[-max_chars:]
 
 
 def _parse_stage_blocks(console_log: str) -> list[tuple[str, str]]:
@@ -433,15 +452,25 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         dsl_match = _DSL_METHOD_RE.search(cleaned or "")
         if dsl_match:
             bad_step = dsl_match.group(1)
-            if analysis.get("confidence", 1.0) < 0.75:
-                analysis["confidence"] = 0.75
-                logger.info("[pipeline] Boosted confidence to 0.75 (invalid DSL step '%s' confirmed in log)", bad_step)
-            # Ensure root cause names the bad step explicitly
+            # Force diagnostic_only — agent cannot safely auto-patch arbitrary step
+            # name typos (no way to know the intended correct step name programmatically).
+            # configure_tool is wrong here; that handler requires verification mismatch data.
+            analysis["fix_type"] = "diagnostic_only"
+            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.90)
+            # Ensure root cause and steps name the bad step explicitly
             if bad_step not in analysis.get("root_cause", ""):
                 analysis["root_cause"] = (
                     f"The Jenkinsfile uses an invalid DSL step name '{bad_step}' which does not exist. "
                     + analysis.get("root_cause", "")
                 ).strip()
+            # Overwrite steps with precise manual instructions
+            analysis["steps"] = [
+                f"Open the job '{payload.get('job_name', 'unknown')}' in Jenkins → Pipeline configuration",
+                f"Find the line containing '{bad_step}' in the Jenkinsfile and replace it with the correct DSL step (e.g. 'echo', 'sh', 'bat')",
+                "Commit and push the corrected Jenkinsfile to the repository",
+                "Trigger a new build to verify the fix",
+            ]
+            logger.info("[pipeline] DSL typo '%s' detected — forced diagnostic_only with manual steps", bad_step)
 
         logger.info(
             "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s steps=%d",
