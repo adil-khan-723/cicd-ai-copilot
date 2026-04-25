@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 _TOOLS_BLOCK = re.compile(r"tools\s*\{([^}]+)\}", re.DOTALL)
 _TOOL_ENTRY = re.compile(r"(\w+)\s+['\"]([^'\"]+)['\"]")
 
+# Matches: withMaven(maven: 'Maven3') or tool(name: 'Maven3', type: 'maven')
+_WITH_MAVEN_RE = re.compile(r"withMaven\s*\([^)]*maven\s*:\s*['\"]([^'\"]+)['\"]")
+_TOOL_STEP_RE  = re.compile(r"tool\s*(?:name\s*:\s*)?['\"]([^'\"]+)['\"](?:[^)]*type\s*:\s*['\"](\w+)['\"])?")
+
+
 # Matches: credentials('CRED_ID') or credentialsId: 'CRED_ID'
 _CRED_PATTERNS = [
     re.compile(r"credentials\s*\(\s*['\"]([^'\"]+)['\"]\s*\)"),
@@ -97,16 +102,37 @@ def verify_jenkins_tools(
 # ---------------------------------------------------------------------------
 
 def _parse_tools_block(content: str) -> list[tuple[str, str]]:
-    """Extract (tool_type, tool_name) pairs from the tools {} block."""
+    """
+    Extract (tool_type, tool_name) pairs from all tool references in Jenkinsfile:
+      - tools { maven 'Maven3' }          declarative tools block
+      - withMaven(maven: 'Maven3')         pipeline-maven plugin step
+      - tool name: 'Maven3', type: 'maven' scripted tool() step
+    """
     tools: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(tool_type: str, tool_name: str) -> None:
+        pair = (tool_type.lower(), tool_name)
+        if pair not in seen:
+            seen.add(pair)
+            tools.append((tool_type.lower(), tool_name))
+
+    # 1. Declarative tools {} block
     match = _TOOLS_BLOCK.search(content)
-    if not match:
-        return tools
-    block = match.group(1)
-    for entry in _TOOL_ENTRY.finditer(block):
-        tool_type = entry.group(1).strip()
-        tool_name = entry.group(2).strip()
-        tools.append((tool_type, tool_name))
+    if match:
+        for entry in _TOOL_ENTRY.finditer(match.group(1)):
+            _add(entry.group(1).strip(), entry.group(2).strip())
+
+    # 2. withMaven(maven: 'Maven3') — pipeline-maven plugin
+    for m in _WITH_MAVEN_RE.finditer(content):
+        _add("maven", m.group(1))
+
+    # 3. tool(name: 'Maven3', type: 'maven') or tool 'Maven3' (defaults to maven)
+    for m in _TOOL_STEP_RE.finditer(content):
+        tool_name = m.group(1)
+        tool_type = m.group(2) if m.group(2) else "maven"
+        _add(tool_type, tool_name)
+
     return tools
 
 
@@ -124,30 +150,42 @@ def _parse_credentials(content: str) -> list[str]:
 
 def _fetch_configured_tools(client: httpx.Client, jenkins_url: str) -> dict[str, list[str]]:
     """
-    Returns {tool_type_key: [configured_name, ...]} from Jenkins global tool config.
-    Uses the globalConfiguration API endpoint.
+    Returns {tool_type: [configured_name, ...]} from Jenkins global tool config.
+    Uses the script console (POST /scriptText) which reliably returns all tool installations.
+    Falls back to empty dict on any error.
     """
-    url = f"{jenkins_url.rstrip('/')}/configfiles/api/json"
-    # Primary: try global tool configuration
-    url_tools = f"{jenkins_url.rstrip('/')}/api/json?depth=2"
+    # Enumerate every registered ToolDescriptor dynamically — no hardcoded type list,
+    # picks up any installed tool plugin automatically.
+    # Uses displayName as the type key (e.g. "Maven", "JDK", "Git") — clean and stable.
+    script = (
+        "import jenkins.model.Jenkins\n"
+        "Jenkins.instance.getExtensionList(hudson.tools.ToolDescriptor.class).each { desc ->\n"
+        "  try {\n"
+        "    def typeName = desc.displayName?.toLowerCase()?.replaceAll('[^a-z0-9]', '') ?: 'tool'\n"
+        "    desc.installations.each { inst ->\n"
+        "      if (inst.name) println typeName + ':' + inst.name\n"
+        "    }\n"
+        "  } catch (e) {}\n"
+        "}\n"
+        "null\n"
+    )
+    url = f"{jenkins_url.rstrip('/')}/scriptText"
     try:
-        resp = client.get(url_tools)
+        resp = client.post(url, data={"script": script})
         resp.raise_for_status()
-    except httpx.HTTPStatusError:
+    except (httpx.HTTPStatusError, httpx.ConnectError):
         return {}
 
-    data = resp.json()
     tools: dict[str, list[str]] = {}
-
-    # Jenkins exposes tool installations under different keys depending on plugin
-    # Common patterns: "jdk", "maven", "git", "gradle", "nodejs", "docker"
-    for key in ("tools", "jdks", "mavens", "gits", "gradleInstallations", "nodejsInstallations"):
-        items = data.get(key, [])
-        if isinstance(items, list):
-            for item in items:
-                name = item.get("name") or item.get("id", "")
-                if name:
-                    tools.setdefault(key, []).append(name)
+    for line in resp.text.splitlines():
+        line = line.strip()
+        if ":" not in line:
+            continue
+        tool_type, _, tool_name = line.partition(":")
+        tool_type = tool_type.strip().lower()
+        tool_name = tool_name.strip()
+        if tool_type and tool_name:
+            tools.setdefault(tool_type, []).append(tool_name)
 
     return tools
 
@@ -244,3 +282,12 @@ def _infer_required_plugins(tools: list[tuple[str, str]]) -> list[str]:
         if plugin:
             plugins.append(plugin)
     return plugins
+
+
+def get_configured_tools(jenkins_url: str, auth=None, timeout: float = 10.0) -> dict[str, list[str]]:
+    """Public helper: return {tool_type: [name, ...]} from Jenkins global tool config."""
+    try:
+        with httpx.Client(auth=auth, timeout=timeout) as client:
+            return _fetch_configured_tools(client, jenkins_url)
+    except Exception:
+        return {}

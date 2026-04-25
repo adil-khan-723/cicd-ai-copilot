@@ -120,6 +120,7 @@ def _process_notification_failure_sync(job: str, build: str, payload: dict) -> N
         "status":       "FAILURE",
         "stages":       _detect_stages(console_log),
         "log":          _slice_log(console_log, 8000) if console_log else "No log available",
+        "_full_log":    console_log,  # unsliced — for tail-error detection in _run_verification
         "jenkinsfile":  jenkinsfile,
     }
 
@@ -162,63 +163,49 @@ _INTERNAL_STAGES = frozenset({
 _STAGE_OPEN_RE  = re.compile(r'^\[Pipeline\] \{ \((.+?)\)\s*$')
 # Matches closing brace for a stage
 _STAGE_CLOSE_RE = re.compile(r'^\[Pipeline\] \}')
-# Error indicators that signal a stage actually failed (not just was skipped)
+# Error indicators that signal a stage actually failed (not just was skipped).
+# Deliberately narrow — avoids matching "0 failed" in test output, "error:" in URLs, etc.
 _STAGE_ERROR_RE = re.compile(
-    r'(?:^ERROR\b|: not found$|command not found|exit code [1-9]|FAILED|Exception|'
-    r'Build step .* failed|returned exit code|fatal:|error:)',
+    r'(?:^ERROR\b|\bProcess .* exit code [1-9]|\bcommand not found\b'
+    r'|\bBuild step .* failed\b|\breturned exit code [1-9]'
+    r'|\bException\b|\bFATAL\b'
+    r'|^\+ .+: not found$'
+    r'|\bNo such DSL method\b'
+    r'|\bCredentialsNotFoundException\b'
+    r'|\bFlowInterruptedException\b)',
     re.IGNORECASE | re.MULTILINE,
 )
 # Jenkins declarative: stage was skipped because an earlier stage failed
 _SKIP_RE = re.compile(r'Stage ".+?" skipped due to earlier failure', re.IGNORECASE)
 
 
-def _extract_correct_step(bad_step: str, analysis: dict) -> str:
-    """
-    Infer the correct DSL step name from LLM analysis text or by stripping
-    trailing digits/noise from the bad step name.
-
-    Priority:
-    1. Parse LLM root_cause/steps for "correct step (name) is 'X'" pattern
-    2. Strip trailing digits from bad_step (echo1→echo, sh2→sh, bat1→bat)
-    3. Return empty string (caller falls back to diagnostic_only)
-    """
-    combined = " ".join([
-        analysis.get("root_cause", ""),
-        analysis.get("fix_suggestion", ""),
-        *analysis.get("steps", []),
-    ])
-    # Pattern: "correct step is 'echo'" or "replace with 'echo'" or "use 'echo'"
-    m = re.search(
-        r"(?:correct step(?:\s+name)?\s+is|replace\s+\w+\s+with|use\s+step)\s+['\"](\w+)['\"]",
-        combined, re.IGNORECASE,
-    )
-    if m:
-        return m.group(1)
-
-    # Strip trailing digits/noise: echo1 → echo, sh2 → sh, bat99 → bat
-    stripped = re.sub(r'\d+$', '', bad_step)
-    if stripped and stripped != bad_step:
-        return stripped
-
-    return ""
-
 
 def _slice_log(log: str, max_chars: int) -> str:
     """
-    Return up to max_chars of the log, anchored at the first error line.
-    Prevents pre-stage errors (NoSuchMethodError, CPS compile failures) from
-    being discarded when the log is truncated from the tail.
+    Return up to max_chars of the log.
+
+    Strategy:
+    - If log fits, return as-is.
+    - If first error is in the top 30% of the log (compile-time / pre-stage failure),
+      anchor there so the error isn't discarded. This handles CPS compile failures
+      that appear before any stage block.
+    - Otherwise take the tail — runtime errors (No such DSL method, credential failures,
+      timeouts) appear at the end of the log after all stage blocks have run.
+      Tail slicing preserves the stage blocks AND the error.
     """
     if len(log) <= max_chars:
         return log
     _anchor = re.compile(
-        r'(No such DSL method|NoSuchMethodError|ERROR:|error:|FAILED|Exception:|Caused by:)',
+        r'(No such DSL method|NoSuchMethodError|MultipleCompilationErrorsException'
+        r'|startup failed:|WorkflowScript: \d+:|ERROR:|FAILED|Exception:|Caused by:)',
         re.IGNORECASE,
     )
     m = _anchor.search(log)
-    if m:
-        start = max(0, m.start() - 500)
+    if m and m.start() < len(log) * 0.30:
+        # Error is near the top — anchor there (compile-time failure)
+        start = max(0, m.start() - 200)
         return ("...[truncated]\n" if start > 0 else "") + log[start:start + max_chars]
+    # Error is in the middle/tail — take the tail to preserve stage blocks + error
     return log[-max_chars:]
 
 
@@ -305,18 +292,32 @@ def _detect_stages(console_log: str) -> list:
         else:
             result.append({"name": name, "status": "passed"})
 
-    # Jenkins withCredentials throws after the stage block closes — the error
-    # lands in the tail of the log, not inside the block. Detect and re-attribute.
-    _CREDS_TAIL_RE = re.compile(
-        r'Could not find credentials entry with ID|CredentialsNotFoundException',
+    # Some errors land in the log AFTER all stage blocks close (Jenkins reports them
+    # at pipeline teardown). Re-attribute to the last stage that ran before the error.
+    # Patterns:
+    #   - withCredentials: CredentialsNotFoundException
+    #   - No such DSL method: step name typo, error emitted after stage closes
+    #   - No maven named X: tool resolution failure reported post-stage
+    _TAIL_ERROR_RE = re.compile(
+        r'Could not find credentials entry with ID|CredentialsNotFoundException'
+        r'|No such DSL method\b'
+        r'|No maven named\b|No tool named\b'
+        r'|FlowInterruptedException',
         re.IGNORECASE,
     )
-    if not failed_seen and creds_stage and _CREDS_TAIL_RE.search(console_log):
-        for entry in result:
-            if entry["name"] == creds_stage:
+    if not failed_seen and _TAIL_ERROR_RE.search(console_log):
+        # Find the last stage that was not skipped — that's the one that failed
+        for entry in reversed(result):
+            if entry["status"] == "passed":
                 entry["status"] = "failed"
                 failed_seen = True
-            elif failed_seen:
+                break
+        # Mark everything after it as skipped
+        found = False
+        for entry in result:
+            if entry["status"] == "failed" and not found:
+                found = True
+            elif found:
                 entry["status"] = "skipped"
 
     return result
@@ -442,69 +443,74 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         context_str = build_context(cleaned, report, ctx, jenkinsfile=payload.get("jenkinsfile", ""))
         analysis = analyze(context_str)  # always returns a dict — never raises
 
+        # ── Syntax/DSL-error sentinel — checked before verification overrides ───────
+        # Covers both compile-time (MultipleCompilationErrorsException, startup failed)
+        # and runtime DSL errors (No such DSL method) which appear in the full log tail,
+        # not necessarily inside the extracted stage block.
+        # Search both cleaned (stage block) AND the full sliced log so nothing is missed.
+        _GROOVY_COMPILE_RE = re.compile(
+            r"MultipleCompilationErrorsException"
+            r"|No such DSL method\b"
+            r"|Expected a step\b"
+            r"|unexpected token\b"
+            r"|unable to resolve class\b"
+            r"|startup failed:"
+            r"|WorkflowScript: \d+: ",
+            re.IGNORECASE,
+        )
+        _full_log = payload.get("_full_log", payload.get("log", ""))
+        _has_compile_error = bool(
+            _GROOVY_COMPILE_RE.search(cleaned or "")
+            or _GROOVY_COMPILE_RE.search(_full_log)
+        )
+
         # Verification facts override LLM guess — crawler findings are deterministic,
         # LLM output is probabilistic. If the crawler found a mismatch/missing cred
         # and the LLM didn't pick it up, force the correct fix_type.
-        if report.mismatched_tools and analysis.get("fix_type") != "configure_tool":
-            analysis["fix_type"] = "configure_tool"
-            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.85)
-            if not analysis.get("fix_suggestion"):
-                m = report.mismatched_tools[0]
-                analysis["fix_suggestion"] = (
-                    f"Rename tool reference from '{m.referenced}' to '{m.configured}' "
-                    f"in the Jenkinsfile tools block."
+        # Skip when a compile error is present — syntax must be fixed first.
+        if not _has_compile_error:
+            if report.mismatched_tools and analysis.get("fix_type") != "configure_tool":
+                analysis["fix_type"] = "configure_tool"
+                analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.85)
+                if not analysis.get("fix_suggestion"):
+                    m = report.mismatched_tools[0]
+                    analysis["fix_suggestion"] = (
+                        f"Rename tool reference from '{m.referenced}' to '{m.configured}' "
+                        f"in the Jenkinsfile tools block."
+                    )
+            elif report.missing_credentials and analysis.get("fix_type") != "configure_credential":
+                analysis["fix_type"] = "configure_credential"
+                analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.82)
+                if not analysis.get("fix_suggestion"):
+                    cid = report.missing_credentials[0]
+                    analysis["fix_suggestion"] = (
+                        f"Create credential '{cid}' in Jenkins Global Credentials store "
+                        f"(Manage Jenkins → Credentials)."
+                    )
+
+        # ── Confidence booster: Groovy/Jenkins compile error detected in log ──────
+        # We do NOT extract bad/correct from the log ourselves — the LLM has the
+        # Jenkinsfile source and is the sole authority on what is wrong and how to fix it.
+        # Our only job here: if the log proves it's a compile/syntax error, ensure
+        # confidence is high enough that Apply Fix is shown (not "Requires manual action").
+        if _has_compile_error:
+            if analysis.get("fix_type") == "fix_step_typo":
+                # LLM correctly identified it — just make sure confidence is high
+                analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.92)
+                # Populate bad_step/correct_step from LLM-provided bad_line/correct_line
+                if analysis.get("bad_line") and not analysis.get("bad_step"):
+                    analysis["bad_step"] = analysis["bad_line"]
+                if analysis.get("correct_line") and not analysis.get("correct_step"):
+                    analysis["correct_step"] = analysis["correct_line"]
+                logger.info(
+                    "[pipeline] Groovy compile error + LLM fix_step_typo — bad=%r correct=%r",
+                    str(analysis.get("bad_step", ""))[:60],
+                    str(analysis.get("correct_step", ""))[:60],
                 )
-        elif report.missing_credentials and analysis.get("fix_type") != "configure_credential":
-            analysis["fix_type"] = "configure_credential"
-            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.82)
-            if not analysis.get("fix_suggestion"):
-                cid = report.missing_credentials[0]
-                analysis["fix_suggestion"] = (
-                    f"Create credential '{cid}' in Jenkins Global Credentials store "
-                    f"(Manage Jenkins → Credentials)."
-                )
-
-        # Deterministic override: bad Docker image tag → pull_image
-        _BAD_TAG_LOG_RE = re.compile(
-            r"node:18-alpine-nonexistent|FROM\s+\S+:(?:[a-z0-9._]+-)*(?:nonexistent|bad|broken|missing|invalid)",
-            re.IGNORECASE,
-        )
-        if (analysis.get("fix_type") == "diagnostic_only"
-                and _BAD_TAG_LOG_RE.search(cleaned or "")):
-            analysis["fix_type"] = "pull_image"
-            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.90)
-            logger.info("[pipeline] Overriding fix_type → pull_image (bad image tag detected in log)")
-
-        # Deterministic override: invalid DSL method name detected in log
-        # Jenkins error "No such DSL method 'X'" = definite typo in Jenkinsfile.
-        # LLM often gives low confidence because the CPS stack trace looks ambiguous.
-        # We know for certain what the error is — boost confidence so Apply Fix is shown.
-        _DSL_METHOD_RE = re.compile(r"No such DSL method '([^']+)'", re.IGNORECASE)
-        dsl_match = _DSL_METHOD_RE.search(cleaned or "")
-        if dsl_match:
-            bad_step = dsl_match.group(1)
-            # Extract the correct step name from LLM root_cause/steps text.
-            # LLM reliably phrases it as: "correct step is 'X'" or "correct step name is 'X'"
-            # or "replace ... with 'X'". Fall back to stripping trailing digits.
-            correct_step = _extract_correct_step(bad_step, analysis)
-
-            analysis["fix_type"] = "fix_step_typo"
-            analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.92)
-            analysis["bad_step"] = bad_step
-            analysis["correct_step"] = correct_step
-
-            root_cause = f"The Jenkinsfile uses an invalid DSL step name '{bad_step}' which does not exist."
-            if correct_step:
-                root_cause += f" The correct step is '{correct_step}'."
-            analysis["root_cause"] = root_cause
-
-            analysis["steps"] = [
-                f"Agent will patch the Jenkinsfile: replace '{bad_step}' with '{correct_step}' and reconfigure the job" if correct_step
-                else f"Agent will remove the trailing characters from '{bad_step}' in the Jenkinsfile",
-                f"Job '{payload.get('job_name', 'unknown')}' will be retriggered automatically after the patch",
-                "Verify the new build passes — if it fails again, check for other syntax errors",
-            ]
-            logger.info("[pipeline] DSL typo '%s' → '%s' — fix_step_typo", bad_step, correct_step)
+            elif analysis.get("fix_type") == "diagnostic_only":
+                # LLM saw a syntax error but couldn't produce bad_line/correct_line
+                # (e.g. Jenkinsfile source was missing from context). Stay diagnostic.
+                logger.info("[pipeline] Groovy compile error but LLM returned diagnostic_only — no Jenkinsfile source?")
 
         logger.info(
             "[pipeline] Analysis done: root_cause=%s confidence=%.2f fix_type=%s steps=%d",
@@ -544,8 +550,11 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "fix_type": analysis.get("fix_type"),
             "confidence": analysis.get("confidence", 0),
             "log_excerpt": cleaned[:400],
-            "bad_step": analysis.get("bad_step"),
-            "correct_step": analysis.get("correct_step"),
+            "bad_step": analysis.get("bad_step") or analysis.get("bad_line"),
+            "correct_step": analysis.get("correct_step") or analysis.get("correct_line"),
+            "bad_image": analysis.get("bad_image"),
+            "correct_image": analysis.get("correct_image"),
+            "credential_type": analysis.get("credential_type"),
             "pipeline_stages": [
                 {"name": name, "status": status}
                 for name, status in ctx.pipeline_stages
@@ -626,16 +635,20 @@ def _run_verification(ctx, payload: dict) -> "VerificationReport":
         logger.warning("[verification] Failed (non-fatal): %s", e)
         report = VerificationReport(platform="jenkins")
 
-    # Fallback: parse Jenkins compile-time "did you mean" hints from console log.
-    # Jenkins reports these when a tool block references an unconfigured tool name.
-    # Pattern: Tool type "maven" does not have an install of "Maven3" — did you mean "Maven-3"?
+    # Fallback: parse tool mismatch hints from console log when crawler missed it.
+    # Covers two Jenkins error formats:
+    #   1. Compile-time: Tool type "maven" does not have an install of "Maven3" ... "Maven-3"?
+    #   2. Runtime:      No maven named Maven3 found  (withMaven / tool() step failure)
     if not report.mismatched_tools:
-        console_log = payload.get("log", "")
+        console_log = payload.get("log", "") or ""
+        # Also search the full raw log from the notification payload (not just the slice)
+        full_log = payload.get("_full_log", console_log)
+
         _DID_YOU_MEAN = re.compile(
             r'Tool type "([^"]+)" does not have an install of "([^"]+)"[^"]*"([^"]+)"',
             re.IGNORECASE,
         )
-        for m in _DID_YOU_MEAN.finditer(console_log):
+        for m in _DID_YOU_MEAN.finditer(full_log):
             tool_type, referenced, suggested = m.group(1), m.group(2), m.group(3)
             if suggested.lower() != "null":
                 report.mismatched_tools.append(ToolMismatch(
@@ -643,8 +656,33 @@ def _run_verification(ctx, payload: dict) -> "VerificationReport":
                     configured=suggested,
                     match_score=0.91,
                 ))
-                logger.info("[verification] Parsed tool mismatch from log: '%s' → '%s'",
+                logger.info("[verification] Parsed tool mismatch (did-you-mean): '%s' → '%s'",
                             referenced, suggested)
+
+        # Runtime format: "No maven named Maven3 found" — Jenkins knows the right name
+        # from its own config; use the crawler-verified configured names if available.
+        if not report.mismatched_tools:
+            _NO_TOOL_RE = re.compile(r'No (\w+) named [\'"]?([^\'"]+?)[\'"]? found', re.IGNORECASE)
+            for m in _NO_TOOL_RE.finditer(full_log):
+                tool_type, referenced = m.group(1).lower(), m.group(2).strip()
+                # Ask crawler for configured names of this tool type
+                try:
+                    from verification.jenkins_crawler import get_configured_tools
+                    configured = get_configured_tools(
+                        settings.jenkins_url,
+                        auth=(settings.jenkins_user, settings.jenkins_token) if settings.jenkins_token else None,
+                    )
+                    matches = configured.get(tool_type, [])
+                    if matches:
+                        report.mismatched_tools.append(ToolMismatch(
+                            referenced=referenced,
+                            configured=matches[0],
+                            match_score=0.88,
+                        ))
+                        logger.info("[verification] Parsed tool mismatch (no-tool-named): '%s' → '%s'",
+                                    referenced, matches[0])
+                except Exception:
+                    pass
 
     return report
 

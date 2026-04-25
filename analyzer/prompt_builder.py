@@ -16,7 +16,12 @@ Response schema:
   "fix_suggestion": "<one sentence summary of the fix>",
   "steps": ["<step 1>", "<step 2>", ...],
   "confidence": <float between 0.0 and 1.0>,
-  "fix_type": "<one of: retry|clear_cache|pull_image|increase_timeout|configure_tool|configure_credential|diagnostic_only>"
+  "fix_type": "<one of: retry|clear_cache|pull_image|increase_timeout|configure_tool|configure_credential|fix_step_typo|diagnostic_only>",
+  "bad_line": "<the exact verbatim line from the Jenkinsfile that contains the error — set when fix_type=fix_step_typo OR increase_timeout>",
+  "correct_line": "<the corrected version of that line — set when fix_type=fix_step_typo OR increase_timeout>",
+  "bad_image": "<the exact invalid image tag as it appears in the FROM line, e.g. 'node:18-nonexistent' — only set when fix_type=pull_image>",
+  "correct_image": "<the corrected image tag to use instead, e.g. 'node:18' or 'node:lts' — only set when fix_type=pull_image>",
+  "credential_type": "<only set when fix_type=configure_credential: 'secret_text' for string()/withCredentials string bindings, 'username_password' for usernamePassword() bindings, 'ssh_key' for sshUserPrivateKey() bindings>"
 }
 
 steps rules:
@@ -31,10 +36,11 @@ steps rules:
 fix_type rules:
 - retry: transient failure or infrastructure issue that may resolve on re-run (Docker daemon unreachable, socket permission errors, network hiccups)
 - clear_cache: stale cache (Docker layer cache, npm, pip, Maven) is causing the issue
-- pull_image: Dockerfile FROM line has an invalid or nonexistent image tag — use this when the error is "manifest unknown", "not found", "does not exist", or the tag contains suffixes like '-nonexistent', '-bad', '-broken', '-missing', '-invalid'. The agent patches the Dockerfile tag automatically. Do NOT use diagnostic_only for bad image tags — use pull_image.
-- increase_timeout: step timed out, needs longer timeout
+- pull_image: Dockerfile FROM line has an invalid or nonexistent image tag — use this when the error is "manifest unknown", "not found", "does not exist", or any image pull failure. Set bad_image to the exact invalid tag as written in the FROM line, correct_image to the best valid replacement (use 'latest' or the closest stable tag if unsure). The agent patches the Dockerfile automatically. Do NOT use diagnostic_only for bad image tags — use pull_image.
+- increase_timeout: step timed out, needs longer timeout. Set bad_line to the exact timeout(...) line from the Jenkinsfile, correct_line to the fixed version with a sufficient value (at least 3x the sleep/wait duration if visible, otherwise 10 minutes)
 - configure_tool: tool name in Jenkinsfile does not match what is configured in Jenkins Global Tool Configuration — patch the Jenkinsfile to use the correct name
-- configure_credential: credential ID in Jenkinsfile does not exist in Jenkins — create the credential or rename the reference
+- configure_credential: credential ID in Jenkinsfile does not exist in Jenkins — create the credential. Set credential_type based on how it is bound: string() → 'secret_text', usernamePassword() → 'username_password', sshUserPrivateKey() → 'ssh_key'
+- fix_step_typo: ANY Groovy/Jenkins syntax error in the Jenkinsfile — invalid DSL step name, wrong number of arguments, unexpected token, missing quotes, wrong method call syntax, MultipleCompilationErrorsException, "Expected a step", "No such DSL method", "unexpected token". Use this whenever the Jenkinsfile source code itself has a syntax or semantic error that can be fixed by editing a line. Set bad_line to the exact verbatim failing line, correct_line to the fixed version.
 - diagnostic_only: requires human intervention that cannot be automated (missing plugin, IAM policy, network issue, unknown error)
 
 Verification findings (if present) are FACTS from the Jenkins API — not guesses.
@@ -42,10 +48,13 @@ If a tool mismatch is listed, use fix_type=configure_tool.
 If a missing credential is listed, use fix_type=configure_credential.
 If a missing plugin is listed, use fix_type=diagnostic_only with exact install steps.
 If confidence is below 0.6, use fix_type=diagnostic_only regardless of your assessment.
-If the error is a Docker image pull failure and the FROM tag contains '-nonexistent', '-bad', '-broken', '-missing', or '-invalid', you MUST use fix_type=pull_image. Never use diagnostic_only for bad image tags.
+If the error is any Docker image pull failure ("manifest unknown", "not found", "does not exist", pull access denied), you MUST use fix_type=pull_image and set bad_image/correct_image. Never use diagnostic_only for bad image tags.
 
 Failing Stage Source (if present) is the EXACT Groovy code from the Jenkinsfile for the failing stage — treat it as ground truth.
-- If a step name in the source does not exist as a valid Jenkins DSL step (e.g. echo1, sh2, bat1), identify it as a typo in root_cause and name the correct step in your fix steps.
+- If a step name in the source does not exist as a valid Jenkins DSL step (e.g. echo1, sh2, bat1), use fix_type=fix_step_typo, set bad_line to the exact failing line, correct_line to the fixed version.
+- If there is any Groovy syntax error (MultipleCompilationErrorsException, "Expected a step", unexpected token, wrong argument count, invalid method call), use fix_type=fix_step_typo, set bad_line and correct_line.
+- bad_line must be copied verbatim from the Jenkinsfile source — do not paraphrase or shorten it.
+- correct_line must be the minimal fix: change only what is wrong, preserve indentation and surrounding syntax.
 - If a tool name in the source does not match Verification Findings, use fix_type=configure_tool.
 - If a credentialsId in the source is not in Verification Findings as configured, use fix_type=configure_credential.
 """

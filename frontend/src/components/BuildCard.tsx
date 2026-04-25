@@ -99,11 +99,17 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
 
       if (analysis.fix_type === 'configure_credential' && analysis.verification?.missing_credentials?.[0]) {
         body.credential_id = analysis.verification.missing_credentials[0]
+        if (analysis.credential_type) body.credential_type = analysis.credential_type
       }
 
-      if (analysis.fix_type === 'fix_step_typo') {
+      if (analysis.fix_type === 'fix_step_typo' || analysis.fix_type === 'increase_timeout') {
         if (analysis.bad_step)    body.bad_step    = analysis.bad_step
         if (analysis.correct_step) body.correct_step = analysis.correct_step
+      }
+
+      if (analysis.fix_type === 'pull_image') {
+        if (analysis.bad_image)    body.bad_image    = analysis.bad_image
+        if (analysis.correct_image) body.correct_image = analysis.correct_image
       }
 
       await fetch('/api/fix', {

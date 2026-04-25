@@ -18,7 +18,7 @@ const FIX_META: Record<string, {
   agentNote: string
 }> = {
   fix_step_typo: {
-    label: 'Fix Invalid DSL Step',
+    label: 'Fix Jenkinsfile Syntax Error',
     icon: <Wrench className="h-5 w-5" strokeWidth={1.8} />,
     accentClass: 'text-accent',
     barClass: 'from-accent via-accent/30 to-transparent',

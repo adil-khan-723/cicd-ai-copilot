@@ -48,6 +48,9 @@ export interface AnalysisCompleteEvent {
   verification?: VerificationData
   bad_step?: string
   correct_step?: string
+  bad_image?: string
+  correct_image?: string
+  credential_type?: string
 }
 
 export interface FixResultEvent {

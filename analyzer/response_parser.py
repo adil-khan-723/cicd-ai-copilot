@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 VALID_FIX_TYPES = {
     "retry", "clear_cache", "clear_npm_cache", "pull_image", "increase_timeout",
-    "configure_tool", "configure_credential", "diagnostic_only", "missing_plugin",
+    "configure_tool", "configure_credential", "fix_step_typo", "diagnostic_only", "missing_plugin",
 }
 
 # Extracts JSON object from text that might have surrounding prose or markdown fences
@@ -71,13 +71,25 @@ def _validate(data: dict) -> dict:
     if not root_cause:
         return _fallback("LLM returned empty root_cause")
 
-    return {
+    result = {
         "root_cause": root_cause,
         "fix_suggestion": fix_suggestion or "Review the failed stage log manually.",
         "steps": steps,
         "confidence": confidence,
         "fix_type": fix_type,
     }
+    # Pass through optional fix fields from LLM
+    if data.get("bad_line"):
+        result["bad_line"] = str(data["bad_line"])
+    if data.get("correct_line"):
+        result["correct_line"] = str(data["correct_line"])
+    if data.get("bad_image"):
+        result["bad_image"] = str(data["bad_image"])
+    if data.get("correct_image"):
+        result["correct_image"] = str(data["correct_image"])
+    if data.get("credential_type"):
+        result["credential_type"] = str(data["credential_type"]).strip().lower()
+    return result
 
 
 def _fallback(reason: str) -> dict:
