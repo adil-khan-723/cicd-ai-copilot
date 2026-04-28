@@ -50,6 +50,18 @@ If a missing plugin is listed, use fix_type=diagnostic_only with exact install s
 If confidence is below 0.6, use fix_type=diagnostic_only regardless of your assessment.
 If the error is any Docker image pull failure ("manifest unknown", "not found", "does not exist", pull access denied), you MUST use fix_type=pull_image and set bad_image/correct_image. Never use diagnostic_only for bad image tags.
 
+Tool install issue (if present in Verification Findings): use fix_type=diagnostic_only. Steps must tell the user EXACTLY:
+- Go to Manage Jenkins → Global Tool Configuration → [tool type] section → find installation named '[tool_name]'
+- If auto-install is configured: verify the download URL is reachable from the Jenkins host, or switch to a manual installation with an explicit home path
+- If home path is empty: set the absolute path to the tool's installation directory (e.g. /usr/share/maven for Maven)
+- Use the exact tool name from the finding in every step
+
+Tool usage warning (if present in Verification Findings): this means a tool is declared but its binary is called directly in sh/bat without PATH being exported. Use fix_type=diagnostic_only. Steps must tell the user EXACTLY how to fix it — choose the approach that matches the existing Jenkinsfile style:
+- Option A (declarative, preferred): wrap the sh step with `withMaven(maven: '[tool_name]') { sh 'mvn ...' }` — this automatically exports the tool's bin/ to PATH
+- Option B (scripted): replace `sh 'mvn ...'` with `sh "${tool '[tool_name]'}/bin/mvn ..."` — this resolves the tool home and calls the binary directly
+- State the exact tool name and binary from the finding in every step
+- Do NOT suggest adding the tool to the tools{} block again — it is already declared there
+
 Failing Stage Source (if present) is the EXACT Groovy code from the Jenkinsfile for the failing stage — treat it as ground truth.
 - If a step name in the source does not exist as a valid Jenkins DSL step (e.g. echo1, sh2, bat1), use fix_type=fix_step_typo, set bad_line to the exact failing line, correct_line to the fixed version.
 - If there is any Groovy syntax error (MultipleCompilationErrorsException, "Expected a step", unexpected token, wrong argument count, invalid method call), use fix_type=fix_step_typo, set bad_line and correct_line.

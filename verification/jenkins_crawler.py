@@ -15,7 +15,7 @@ import logging
 import httpx
 from Levenshtein import ratio as levenshtein_ratio
 
-from verification.models import VerificationReport, ToolMismatch
+from verification.models import VerificationReport, ToolMismatch, ToolInstallIssue, ToolUsagePatternIssue
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ def verify_jenkins_tools(
     try:
         with httpx.Client(auth=auth, timeout=timeout) as client:
             configured_tools = _fetch_configured_tools(client, jenkins_url)
+            tool_install_details = _fetch_tool_install_details(client, jenkins_url)
             installed_plugins = _fetch_installed_plugins(client, jenkins_url)
             configured_creds = _fetch_credentials(client, jenkins_url)
     except httpx.ConnectError:
@@ -77,15 +78,14 @@ def verify_jenkins_tools(
         report.errors.append(f"Jenkins API error: {e.response.status_code}")
         return report
 
-    # Verify tools
+    # Verify tools — name match + install health
     for tool_type, tool_name in referenced_tools:
         _check_tool(tool_type, tool_name, configured_tools, report)
+        _check_tool_install(tool_type, tool_name, configured_tools, tool_install_details, report)
 
     # Verify credentials
     for cred_id in referenced_creds:
-        if cred_id in configured_creds:
-            pass  # credential exists — no need to log matched creds
-        else:
+        if cred_id not in configured_creds:
             report.missing_credentials.append(cred_id)
 
     # Check required plugins based on tool types used
@@ -93,6 +93,9 @@ def verify_jenkins_tools(
     for plugin_id in required_plugins:
         if plugin_id not in installed_plugins:
             report.missing_plugins.append(plugin_id)
+
+    # Detect tool-declared-but-binary-used-directly pattern
+    _check_tool_usage_patterns(jenkinsfile_content, referenced_tools, report)
 
     return report
 
@@ -212,6 +215,189 @@ def _fetch_credentials(client: httpx.Client, jenkins_url: str) -> set[str]:
         return {c.get("id", "") for c in data.get("credentials", [])}
     except (httpx.HTTPStatusError, KeyError):
         return set()
+
+
+# ---------------------------------------------------------------------------
+# New API fetcher: per-tool installation details
+# ---------------------------------------------------------------------------
+
+def _fetch_tool_install_details(client: httpx.Client, jenkins_url: str) -> dict[str, dict]:
+    """
+    Returns {tool_name: {"home": str, "auto_install": bool}} for every configured tool.
+    Uses script console to enumerate all ToolInstallation objects dynamically — no
+    hardcoded tool type list, picks up any plugin automatically.
+    Falls back to empty dict on any error (non-fatal).
+    """
+    script = (
+        "import jenkins.model.Jenkins\n"
+        "import hudson.tools.ToolInstallation\n"
+        "Jenkins.instance.getExtensionList(hudson.tools.ToolDescriptor.class).each { desc ->\n"
+        "  try {\n"
+        "    desc.installations.each { inst ->\n"
+        "      def home = inst.home ?: ''\n"
+        "      def autoInstall = inst.properties?.any { it instanceof hudson.tools.InstallSourceProperty } ?: false\n"
+        "      println inst.name + '|' + home + '|' + autoInstall\n"
+        "    }\n"
+        "  } catch (e) {}\n"
+        "}\n"
+        "null\n"
+    )
+    url = f"{jenkins_url.rstrip('/')}/scriptText"
+    try:
+        resp = client.post(url, data={"script": script})
+        resp.raise_for_status()
+    except Exception:
+        return {}
+
+    details: dict[str, dict] = {}
+    for line in resp.text.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) < 3:
+            continue
+        name, home, auto_install_raw = parts[0], parts[1], parts[2]
+        if name:
+            details[name] = {
+                "home": home.strip(),
+                "auto_install": auto_install_raw.strip().lower() == "true",
+            }
+    return details
+
+
+def _check_tool_install(
+    tool_type: str,
+    tool_name: str,
+    configured_tools: dict[str, list[str]],
+    install_details: dict[str, dict],
+    report: VerificationReport,
+) -> None:
+    """
+    Check whether a matched tool's installation looks healthy.
+    Only runs when the tool name is already confirmed as matched (exact).
+    Flags: empty home path, auto-install with no home set (relies on network download).
+    """
+    # Only check tools that passed the name match (in matched_tools)
+    if tool_name not in report.matched_tools:
+        return
+
+    detail = install_details.get(tool_name)
+    if not detail:
+        # No install details available — cannot assess, skip silently
+        return
+
+    home = detail["home"]
+    auto_install = detail["auto_install"]
+
+    if not home and not auto_install:
+        report.tool_install_issues.append(ToolInstallIssue(
+            tool_type=tool_type,
+            tool_name=tool_name,
+            issue="no install home path and no auto-install configured — tool may not be available at runtime",
+        ))
+    elif not home and auto_install:
+        report.tool_install_issues.append(ToolInstallIssue(
+            tool_type=tool_type,
+            tool_name=tool_name,
+            issue="relies on auto-install (network download at build time) — will fail in air-gapped environments or if download URL is unreachable",
+        ))
+
+
+# ---------------------------------------------------------------------------
+# Tool usage pattern check: declared tool but binary used directly in sh/bat
+# ---------------------------------------------------------------------------
+
+# Maps tool type → set of binary names that could appear in sh/bat steps
+_TOOL_BINARIES: dict[str, set[str]] = {
+    "maven":   {"mvn", "mvnw", "./mvnw"},
+    "gradle":  {"gradle", "gradlew", "./gradlew"},
+    "jdk":     {"java", "javac", "jar"},
+    "nodejs":  {"node", "npm", "npx", "yarn", "pnpm"},
+    "ant":     {"ant"},
+    "docker":  {"docker", "docker-compose"},
+    "git":     {"git"},
+}
+
+# Matches sh/bat/powershell step content: sh 'cmd' or sh "cmd" or sh(script: 'cmd')
+_SH_STEP_RE = re.compile(
+    r"""\b(?:sh|bat|powershell)\s*(?:\(\s*(?:script\s*:\s*)?)?(?:['"])(.*?)(?:['"])""",
+    re.DOTALL,
+)
+
+
+def _check_tool_usage_patterns(
+    jenkinsfile: str,
+    referenced_tools: list[tuple[str, str]],
+    report: VerificationReport,
+) -> None:
+    """
+    Detect tools declared in tools{}/withMaven()/tool() but whose binary is called
+    directly in sh/bat steps. This means the tool is resolved by Jenkins but its
+    bin/ directory may not be on PATH in the shell environment.
+
+    Pattern: maven declared → 'mvn ...' appears in sh step → flag it.
+    Only flags tools that are in the matched or mismatched list (i.e. Jenkins knows about them).
+    Does NOT flag if a withMaven() or tool() step wrapping the sh call is present
+    (those properly export the PATH).
+    """
+    if not referenced_tools or not jenkinsfile:
+        return
+
+    known_names = {name for _, name in referenced_tools}
+
+    # Collect all sh/bat command strings
+    sh_commands = [m.group(1) for m in _SH_STEP_RE.finditer(jenkinsfile)]
+
+    for tool_type, tool_name in referenced_tools:
+        binaries = _TOOL_BINARIES.get(tool_type.lower())
+        if not binaries:
+            continue
+
+        # Check whether a proper wrapper is already in place for this tool type
+        has_wrapper = _has_tool_wrapper(jenkinsfile, tool_type, tool_name)
+        if has_wrapper:
+            continue
+
+        for cmd in sh_commands:
+            # Check if the first token of the command is a known binary for this tool type
+            first_token = cmd.strip().split()[0] if cmd.strip() else ""
+            # Strip leading ./ for comparison
+            bare = first_token.lstrip("./")
+            if bare in {b.lstrip("./") for b in binaries}:
+                report.tool_usage_pattern_issues.append(ToolUsagePatternIssue(
+                    tool_type=tool_type,
+                    tool_name=tool_name,
+                    declared_in=_declared_in(jenkinsfile, tool_type, tool_name),
+                    used_as="direct_sh",
+                    binary=first_token or bare,
+                ))
+                break  # one finding per tool is enough
+
+
+def _has_tool_wrapper(jenkinsfile: str, tool_type: str, tool_name: str) -> bool:
+    """
+    Return True if the Jenkinsfile already wraps sh steps with a proper environment
+    exporter for this tool: withMaven(), tool(), or environment { PATH } block.
+    """
+    name_escaped = re.escape(tool_name)
+    if tool_type == "maven":
+        # withMaven(maven: 'Maven-3') properly exports PATH
+        if re.search(rf"""withMaven\s*\([^)]*maven\s*:\s*['\"]{name_escaped}['\"]""", jenkinsfile):
+            return True
+    # tool('ToolName') or tool(name: 'ToolName') — scripted PATH export
+    if re.search(rf"""tool\s*(?:name\s*:\s*)?['\"]({name_escaped})['\"]""", jenkinsfile):
+        # Only counts as a wrapper if the result is used (assigned or in PATH step)
+        if re.search(r"""(?:env\.PATH|PATH\s*=|def\s+\w+\s*=\s*tool)""", jenkinsfile):
+            return True
+    return False
+
+
+def _declared_in(jenkinsfile: str, tool_type: str, tool_name: str) -> str:
+    """Return where the tool is declared: tools_block | with_maven | tool_step."""
+    name_escaped = re.escape(tool_name)
+    if re.search(rf"""tools\s*\{{[^}}]*{name_escaped}""", jenkinsfile, re.DOTALL):
+        return "tools_block"
+    if re.search(rf"""withMaven\s*\([^)]*maven\s*:\s*['\"]{name_escaped}['\"]""", jenkinsfile):
+        return "with_maven"
+    return "tool_step"
 
 
 # ---------------------------------------------------------------------------
