@@ -10,7 +10,10 @@ from verification.jenkins_crawler import (
     verify_jenkins_tools,
     _parse_tools_block,
     _parse_credentials,
+    _check_tool_usage_patterns,
+    _check_tool_install,
 )
+from verification.models import VerificationReport, ToolMismatch
 
 JENKINS_URL = "http://jenkins.local:8080"
 
@@ -194,3 +197,189 @@ class TestVerifyJenkinsTools:
         lines = report.summary_lines()
         assert any("Maven3" in l for l in lines)
         assert any("ECR_CREDENTIALS" in l for l in lines)
+
+
+# ---------------------------------------------------------------------------
+# Tool install issue checks
+# ---------------------------------------------------------------------------
+
+INSTALL_DETAILS_AUTO = {"Maven-3": {"home": "", "auto_install": True}}
+INSTALL_DETAILS_NO_HOME = {"Maven-3": {"home": "", "auto_install": False}}
+INSTALL_DETAILS_OK = {"Maven-3": {"home": "/usr/share/maven", "auto_install": False}}
+
+
+class TestToolInstallCheck:
+    def _matched_report(self) -> VerificationReport:
+        r = VerificationReport(platform="jenkins")
+        r.matched_tools.append("Maven-3")
+        return r
+
+    def test_auto_install_flagged(self):
+        r = self._matched_report()
+        _check_tool_install("maven", "Maven-3", {}, INSTALL_DETAILS_AUTO, r)
+        assert len(r.tool_install_issues) == 1
+        assert "auto-install" in r.tool_install_issues[0].issue
+
+    def test_no_home_no_auto_flagged(self):
+        r = self._matched_report()
+        _check_tool_install("maven", "Maven-3", {}, INSTALL_DETAILS_NO_HOME, r)
+        assert len(r.tool_install_issues) == 1
+        assert "no install home path" in r.tool_install_issues[0].issue
+
+    def test_healthy_install_not_flagged(self):
+        r = self._matched_report()
+        _check_tool_install("maven", "Maven-3", {}, INSTALL_DETAILS_OK, r)
+        assert len(r.tool_install_issues) == 0
+
+    def test_unmatched_tool_skipped(self):
+        r = VerificationReport(platform="jenkins")
+        # Maven-3 not in matched_tools → skip
+        _check_tool_install("maven", "Maven-3", {}, INSTALL_DETAILS_AUTO, r)
+        assert len(r.tool_install_issues) == 0
+
+    def test_no_detail_for_tool_skipped(self):
+        r = self._matched_report()
+        _check_tool_install("maven", "Maven-3", {}, {}, r)
+        assert len(r.tool_install_issues) == 0
+
+    def test_summary_lines_include_install_issue(self):
+        r = self._matched_report()
+        _check_tool_install("maven", "Maven-3", {}, INSTALL_DETAILS_AUTO, r)
+        lines = r.summary_lines()
+        assert any("Maven-3" in l and "auto-install" in l for l in lines)
+
+
+# ---------------------------------------------------------------------------
+# Tool usage pattern checks
+# ---------------------------------------------------------------------------
+
+JENKINSFILE_DIRECT_MVN = """
+pipeline {
+    agent any
+    tools { maven 'Maven-3' }
+    stages {
+        stage('Build') {
+            steps { sh 'mvn clean package' }
+        }
+    }
+}
+"""
+
+JENKINSFILE_WITH_MAVEN_WRAPPER = """
+pipeline {
+    agent any
+    tools { maven 'Maven-3' }
+    stages {
+        stage('Build') {
+            steps {
+                withMaven(maven: 'Maven-3') {
+                    sh 'mvn clean package'
+                }
+            }
+        }
+    }
+}
+"""
+
+JENKINSFILE_TOOL_STEP_PATH = """
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    def mvnHome = tool 'Maven-3'
+                    env.PATH = "${mvnHome}/bin:${env.PATH}"
+                    sh 'mvn clean package'
+                }
+            }
+        }
+    }
+}
+"""
+
+JENKINSFILE_DIRECT_GRADLE = """
+pipeline {
+    agent any
+    tools { gradle 'Gradle-8' }
+    stages {
+        stage('Build') {
+            steps { sh 'gradle build' }
+        }
+    }
+}
+"""
+
+
+class TestToolUsagePatterns:
+    def test_direct_mvn_flagged(self):
+        r = VerificationReport(platform="jenkins")
+        tools = [("maven", "Maven-3")]
+        _check_tool_usage_patterns(JENKINSFILE_DIRECT_MVN, tools, r)
+        assert len(r.tool_usage_pattern_issues) == 1
+        issue = r.tool_usage_pattern_issues[0]
+        assert issue.tool_type == "maven"
+        assert issue.tool_name == "Maven-3"
+        assert issue.binary == "mvn"
+
+    def test_with_maven_wrapper_not_flagged(self):
+        r = VerificationReport(platform="jenkins")
+        tools = [("maven", "Maven-3")]
+        _check_tool_usage_patterns(JENKINSFILE_WITH_MAVEN_WRAPPER, tools, r)
+        assert len(r.tool_usage_pattern_issues) == 0
+
+    def test_tool_step_with_path_not_flagged(self):
+        r = VerificationReport(platform="jenkins")
+        tools = [("maven", "Maven-3")]
+        _check_tool_usage_patterns(JENKINSFILE_TOOL_STEP_PATH, tools, r)
+        assert len(r.tool_usage_pattern_issues) == 0
+
+    def test_direct_gradle_flagged(self):
+        r = VerificationReport(platform="jenkins")
+        tools = [("gradle", "Gradle-8")]
+        _check_tool_usage_patterns(JENKINSFILE_DIRECT_GRADLE, tools, r)
+        assert len(r.tool_usage_pattern_issues) == 1
+        assert r.tool_usage_pattern_issues[0].tool_type == "gradle"
+
+    def test_no_sh_steps_not_flagged(self):
+        jf = "pipeline { agent any tools { maven 'Maven-3' } stages { stage('S') { steps { echo 'hi' } } } }"
+        r = VerificationReport(platform="jenkins")
+        _check_tool_usage_patterns(jf, [("maven", "Maven-3")], r)
+        assert len(r.tool_usage_pattern_issues) == 0
+
+    def test_empty_tools_list_skipped(self):
+        r = VerificationReport(platform="jenkins")
+        _check_tool_usage_patterns(JENKINSFILE_DIRECT_MVN, [], r)
+        assert len(r.tool_usage_pattern_issues) == 0
+
+    def test_summary_lines_include_usage_warning(self):
+        r = VerificationReport(platform="jenkins")
+        _check_tool_usage_patterns(JENKINSFILE_DIRECT_MVN, [("maven", "Maven-3")], r)
+        lines = r.summary_lines()
+        assert any("Maven-3" in l and "PATH" in l for l in lines)
+
+
+# ---------------------------------------------------------------------------
+# Integration: verify_jenkins_tools emits usage pattern findings
+# ---------------------------------------------------------------------------
+
+SCRIPT_CONSOLE_MATCHED = "maven:Maven-3\n"
+INSTALL_DETAILS_SCRIPT = "Maven-3||true\n"  # auto-install, no home
+
+
+class TestVerifyJenkinsToolsIntegration:
+    @respx.mock
+    def test_usage_pattern_detected_end_to_end(self):
+        respx.post(f"{JENKINS_URL}/scriptText").mock(
+            return_value=httpx.Response(200, text=SCRIPT_CONSOLE_MATCHED + INSTALL_DETAILS_SCRIPT)
+        )
+        respx.get(f"{JENKINS_URL}/pluginManager/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={"plugins": [{"shortName": "maven-plugin"}]})
+        )
+        respx.get(f"{JENKINS_URL}/credentials/store/system/domain/_/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={"credentials": []})
+        )
+
+        report = verify_jenkins_tools(JENKINSFILE_DIRECT_MVN, JENKINS_URL)
+        assert len(report.tool_usage_pattern_issues) == 1
+        assert report.has_issues
