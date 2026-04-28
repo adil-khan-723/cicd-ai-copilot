@@ -69,9 +69,19 @@ class TestConfigureCredential:
     def test_creates_credential_in_jenkins(self):
         """Creates a username/password credential placeholder in Jenkins."""
         server = MagicMock()
-        server.create_credential.return_value = None
 
-        with patch("agent.pipeline_fixes._get_jenkins_server", return_value=server):
+        crumb_response = MagicMock()
+        crumb_response.raise_for_status.return_value = None
+        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
+
+        create_response = MagicMock()
+        create_response.status_code = 200
+
+        with (
+            patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
+            patch("requests.get", return_value=crumb_response),
+            patch("requests.post", return_value=create_response),
+        ):
             result = configure_credential(
                 job_name="node-deploy",
                 build_number="3",

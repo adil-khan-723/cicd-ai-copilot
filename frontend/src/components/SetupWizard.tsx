@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Info, Loader2, CheckCircle2, Github, Server } from 'lucide-react'
+import { Zap, Info, Loader2, CheckCircle2, Github, Server, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { SetupFormData } from '@/types'
@@ -20,9 +20,22 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
     jenkins_user:  initialData?.jenkins_user  ?? '',
     jenkins_token: initialData?.jenkins_token ?? '',
   })
-  const [error,   setError]   = useState('')
-  const [loading, setLoading] = useState(false)
-  const [saved,   setSaved]   = useState(false)
+  const [error,            setError]            = useState('')
+  const [loading,          setLoading]          = useState(false)
+  const [saved,            setSaved]            = useState(false)
+  const [jenkinsTestState, setJenkinsTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+
+  async function testJenkins() {
+    if (!form.jenkins_url.trim()) return
+    setJenkinsTestState('testing')
+    try {
+      const r = await fetch('/api/health')
+      const data = await r.json()
+      setJenkinsTestState(data?.ok ? 'ok' : 'fail')
+    } catch {
+      setJenkinsTestState('fail')
+    }
+  }
 
   function set(key: keyof SetupFormData) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -117,12 +130,25 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                     <Server className="h-3.5 w-3.5 text-text-dim" />
                     <span className="text-[10px] font-semibold text-text-muted uppercase tracking-widest">Jenkins</span>
                   </div>
-                  <Input
-                    label="URL"
-                    placeholder="https://jenkins.example.com"
-                    value={form.jenkins_url}
-                    onChange={set('jenkins_url')}
-                  />
+                  <div>
+                    <Input
+                      label="URL"
+                      placeholder="https://jenkins.example.com"
+                      value={form.jenkins_url}
+                      onChange={e => { set('jenkins_url')(e); setJenkinsTestState('idle') }}
+                      onBlur={testJenkins}
+                    />
+                    {jenkinsTestState !== 'idle' && (
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        {jenkinsTestState === 'testing' && <Loader2 className="h-3 w-3 text-text-dim animate-spin" />}
+                        {jenkinsTestState === 'ok'      && <CheckCircle2 className="h-3 w-3 text-success" strokeWidth={2} />}
+                        {jenkinsTestState === 'fail'    && <XCircle className="h-3 w-3 text-error" strokeWidth={2} />}
+                        <span className={`text-[10px] font-mono ${jenkinsTestState === 'ok' ? 'text-success' : jenkinsTestState === 'fail' ? 'text-error' : 'text-text-dim'}`}>
+                          {jenkinsTestState === 'testing' ? 'Connecting…' : jenkinsTestState === 'ok' ? 'Connected' : 'Cannot reach Jenkins'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Input
                       label="Username"

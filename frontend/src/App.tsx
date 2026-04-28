@@ -23,12 +23,24 @@ export default function App() {
   const [bootDone,      setBootDone]      = useState(false)
 
   // ── Chat state lifted here so it survives panel switches ─────────────────
-  const [chatMessages,  setChatMessages]  = useState<ChatMessage[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const stored = localStorage.getItem('devops_ai_chat')
+      return stored ? JSON.parse(stored) : []
+    } catch { return [] }
+  })
   const [chatStreaming,  setChatStreaming]  = useState(false)
+
+  useEffect(() => {
+    // Persist completed messages only (skip in-flight streaming)
+    const completed = chatMessages.filter(m => !m.isStreaming)
+    try { localStorage.setItem('devops_ai_chat', JSON.stringify(completed.slice(-50))) } catch {}
+  }, [chatMessages])
 
   // ── Jobs wire-up state lifted so it survives panel switches ───────────────
   const [wireStatus, setWireStatus] = useState<Record<string, 'ok' | 'already' | 'err'>>({})
   const [selectedCard, setSelectedCard] = useState<BuildCard | null>(null)
+  const [selectedStage, setSelectedStage] = useState<string | null>(null)
 
   // ── Known Jenkins job names — used to filter phantom cards ────────────────
   const [knownJobs, setKnownJobs] = useState<Set<string>>(new Set())
@@ -196,6 +208,25 @@ export default function App() {
   })()
   const cardList = allCards
 
+  // Compute the latest failing build key per job.
+  // A card qualifies if: analysis complete, no successEvent, not dismissed,
+  // and is the highest build number for that job among such cards.
+  const latestFailingKeys = (() => {
+    const result = new Set<string>()
+    const byJob = new Map<string, BuildCard>()
+    for (const card of cards.values()) {
+      if (!card.analysis || card.successEvent || card.dismissed) continue
+      const current = byJob.get(card.job)
+      if (!current || Number(card.build) > Number(current.build)) {
+        byJob.set(card.job, card)
+      }
+    }
+    for (const card of byJob.values()) {
+      result.add(card.key)
+    }
+    return result
+  })()
+
   if (!bootDone) return null
 
   return (
@@ -210,6 +241,7 @@ export default function App() {
         active={activePanel}
         onNav={setActivePanel}
         onNewProject={() => setSetupVisible(true)}
+        failureCount={latestFailingKeys.size}
       />
 
       <div className="flex flex-col flex-1 overflow-hidden">
@@ -227,10 +259,12 @@ export default function App() {
           <div className={activePanel === 'pipeline' ? 'h-full' : 'hidden'}>
             <PipelineFeed
               cards={cardList}
+              latestFailingKeys={latestFailingKeys}
               onDismiss={dismissCard}
               onClearAll={clearFeed}
               onDiscardJob={discardJob}
-              onOpenDetail={setSelectedCard}
+              onOpenDetail={c => { setSelectedCard(c); setSelectedStage(null) }}
+              onOpenDetailAtStage={(c, stage) => { setSelectedCard(c); setSelectedStage(stage) }}
             />
           </div>
           <div className={activePanel === 'chat' ? 'h-full' : 'hidden'}>
@@ -249,7 +283,11 @@ export default function App() {
           </div>
         </main>
       </div>
-      <BuildDetailDrawer card={selectedCard} onClose={() => setSelectedCard(null)} />
+      <BuildDetailDrawer
+        card={selectedCard}
+        onClose={() => { setSelectedCard(null); setSelectedStage(null) }}
+        scrollToStage={selectedStage}
+      />
     </div>
   )
 }

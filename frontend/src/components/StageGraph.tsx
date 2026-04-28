@@ -75,7 +75,7 @@ function PipelineStatusIcon({ status }: { status: PipelineStage['status'] }) {
   return <SkipForward className="h-3.5 w-3.5 text-text-dim" strokeWidth={1.5} />
 }
 
-export function PipelineStageRow({ stages }: { stages: PipelineStage[] }) {
+export function PipelineStageRow({ stages, onStageClick }: { stages: PipelineStage[]; onStageClick?: (stage: PipelineStage) => void }) {
   if (!stages.length) return null
   return (
     <div className="flex items-center gap-0 overflow-x-auto">
@@ -85,8 +85,10 @@ export function PipelineStageRow({ stages }: { stages: PipelineStage[] }) {
             initial={{ opacity: 0, scale: 0.7 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: i * 0.05, type: 'spring', stiffness: 400, damping: 28 }}
+            onClick={() => onStageClick?.(s)}
             className={cn(
-              'flex flex-col items-center gap-1.5 px-2.5 py-2 rounded-md min-w-[72px] cursor-default transition-colors duration-150',
+              'flex flex-col items-center gap-1.5 px-2.5 py-2 rounded-md min-w-[72px] transition-colors duration-150',
+              onStageClick ? 'cursor-pointer hover:ring-1 hover:ring-accent-border' : 'cursor-default',
               s.status === 'passed'  && 'bg-success-dim',
               s.status === 'failed'  && 'bg-error-dim',
               s.status === 'skipped' && 'opacity-40',

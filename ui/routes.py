@@ -171,6 +171,30 @@ async def trigger(payload: TriggerPayload):
     return result
 
 
+# ── Build history ──────────────────────────────────────────────────────────
+
+@router.get("/api/build-history")
+async def build_history(job: str, limit: int = 5):
+    s = get_settings()
+    if not s.jenkins_url or not s.jenkins_token:
+        raise HTTPException(status_code=503, detail="Jenkins not configured")
+
+    def _fetch():
+        import requests as _req
+        url = f"{s.jenkins_url.rstrip('/')}/job/{job}/api/json"
+        params = {"tree": f"builds[number,result,timestamp,duration]{{0,{limit}}}"}
+        r = _req.get(url, auth=(s.jenkins_user or '', s.jenkins_token or ''), params=params, timeout=8)
+        r.raise_for_status()
+        return r.json().get("builds", [])
+
+    loop = asyncio.get_event_loop()
+    try:
+        builds = await loop.run_in_executor(None, _fetch)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"builds": builds}
+
+
 # ── Build log ──────────────────────────────────────────────────────────────
 
 @router.get("/api/build-log")
@@ -305,7 +329,26 @@ async def fix(payload: FixPayload):
         except Exception:
             pass
 
+    # Snapshot the next build number before the fix triggers a new run
+    def _get_next_build_number(job: str) -> int | None:
+        import requests as _req
+        from config import get_settings as _gs
+        _s = _gs()
+        if not _s.jenkins_url:
+            return None
+        try:
+            r = _req.get(
+                f"{_s.jenkins_url.rstrip('/')}/job/{job}/api/json?tree=nextBuildNumber",
+                auth=(_s.jenkins_user or '', _s.jenkins_token or ''),
+                timeout=5,
+            )
+            return r.json().get("nextBuildNumber")
+        except Exception:
+            return None
+
     loop = asyncio.get_event_loop()
+    next_build = await loop.run_in_executor(None, _get_next_build_number, payload.job_name)
+
     result = await loop.run_in_executor(
         None,
         lambda: execute_fix(payload.fix_type, payload.job_name, payload.build_number, **kwargs)
@@ -327,8 +370,23 @@ async def fix(payload: FixPayload):
         "fix_type": payload.fix_type,
         "success": result.success,
         "detail": result.detail,
+        "next_build": next_build,
     })
-    return {"success": result.success, "fix_type": result.fix_type, "detail": result.detail}
+    return {
+        "success": result.success,
+        "fix_type": result.fix_type,
+        "detail": result.detail,
+        "next_build": next_build,
+    }
+
+
+# ── Audit log ─────────────────────────────────────────────────────────────
+
+@router.get("/api/audit")
+async def audit_log(limit: int = 20):
+    from agent.audit_log import read_recent
+    entries = read_recent(limit)
+    return {"entries": list(reversed(entries))}  # most recent first
 
 
 # ── Inject webhook post blocks into a Jenkins job ─────────────────────────

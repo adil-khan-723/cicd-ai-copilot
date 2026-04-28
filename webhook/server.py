@@ -170,6 +170,8 @@ _STAGE_ERROR_RE = re.compile(
     r'|\bBuild step .* failed\b|\breturned exit code [1-9]'
     r'|\bException\b|\bFATAL\b'
     r'|^\+ .+: not found$'
+    r'|: not found$'
+    r'|\bpermission denied\b'
     r'|\bNo such DSL method\b'
     r'|\bCredentialsNotFoundException\b'
     r'|\bFlowInterruptedException\b)',
@@ -268,6 +270,14 @@ def _detect_stages(console_log: str) -> list:
 
     blocks = _parse_stage_blocks(console_log)
     if not blocks:
+        # Compile-time failure: Jenkins never opened any stage block.
+        # Synthesize a virtual stage so the UI shows something useful.
+        _COMPILE_ERROR_RE = re.compile(
+            r'MultipleCompilationErrorsException|startup failed:|WorkflowScript:.*error',
+            re.IGNORECASE,
+        )
+        if _COMPILE_ERROR_RE.search(console_log):
+            return [{"name": "Pipeline Startup", "status": "failed"}]
         return []
 
     result = []
