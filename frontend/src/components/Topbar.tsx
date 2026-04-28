@@ -1,4 +1,4 @@
-import { GitBranch, Circle } from 'lucide-react'
+import { GitBranch, Circle, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ActivePanel } from '@/types'
 
@@ -27,21 +27,27 @@ export function Topbar({ activePanel, repoName, jenkinsStatus }: TopbarProps) {
 
       <div className="flex items-center gap-2.5">
         {repoName && (
-          <div className="flex items-center gap-2 text-[12px] font-mono text-text-muted bg-overlay/60 border border-accent-border/40 rounded-lg px-3 py-1.5 max-w-xs">
+          <a
+            href={`https://github.com/${repoName}`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 text-[12px] font-mono text-text-muted bg-overlay/60 border border-accent-border/40 rounded-lg px-3 py-1.5 max-w-xs hover:border-accent-border hover:text-accent transition-all duration-150"
+          >
             <GitBranch className="h-3.5 w-3.5 text-text-dim shrink-0" />
             <span className="break-all">{repoName}</span>
-          </div>
+            <ExternalLink className="h-3 w-3 shrink-0 text-text-dim" strokeWidth={1.5} />
+          </a>
         )}
 
         <div className={cn(
-          'flex items-center gap-2 text-[12px] font-mono px-3 py-1.5 rounded-lg border',
+          'flex items-center gap-2 font-mono px-3 py-1.5 rounded-lg border',
           jenkinsStatus === 'connected'
-            ? 'text-success border-success-border bg-success-dim'
+            ? 'text-success border-success-border bg-success-dim text-[12px] font-semibold'
             : jenkinsStatus === 'disconnected'
-            ? 'text-error border-error-border bg-error-dim'
-            : 'text-text-muted border-accent-border/40 bg-overlay/40'
+            ? 'text-error border-error-border bg-error-dim text-[12px] font-semibold'
+            : 'text-text-muted border-accent-border/40 bg-overlay/40 text-[12px]'
         )}>
-          <Circle className={cn('h-2 w-2 fill-current shrink-0', jenkinsStatus === 'connected' ? 'dot-pulse' : '')} />
+          <Circle className={cn('h-2.5 w-2.5 fill-current shrink-0', jenkinsStatus === 'connected' ? 'dot-pulse' : '')} />
           <span>
             {jenkinsStatus === 'connected'
               ? 'Jenkins Connected'

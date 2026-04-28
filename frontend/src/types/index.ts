@@ -60,6 +60,7 @@ export interface FixResultEvent {
   fix_type: string
   success: boolean
   detail: string
+  next_build?: number
 }
 
 export interface BuildSuccessEvent {

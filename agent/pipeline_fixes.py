@@ -140,10 +140,10 @@ def pull_fresh_image(
                 detail=f"Image tag '{bad_image}' not found in any Dockerfile under /tmp — patch could not be applied.",
             )
 
-        # No LLM-provided image info — plain retry
+        # No LLM-provided image info — retrigger with PULL_FRESH_IMAGE flag
         logger.info("pull_fresh_image: no bad_image/correct_image provided, plain retry for %s", job_name)
         try:
-            server.build_job(job_name)
+            server.build_job(job_name, parameters={"PULL_FRESH_IMAGE": "true"})
         except Exception:
             pass
         return FixResult(

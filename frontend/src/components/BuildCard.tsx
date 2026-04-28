@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2, Clock, Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
@@ -9,6 +9,13 @@ import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType } from '@/types'
 
 const CONFIDENCE_THRESHOLD = 0.75
+
+function fmtTime(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000)
+  if (s < 60)   return `${s}s ago`
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
 
 export function SuccessBuildCard({ card, onDiscard }: { card: BuildCardType; onDiscard: () => void }) {
   const { successEvent } = card
@@ -64,21 +71,29 @@ const DIAGNOSTIC_TYPES = new Set([
   'diagnostic_only', 'missing_plugin',
 ])
 
-export function BuildCard({ card, onDismiss, onOpenDetail }: {
+export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOpenDetailAtStage, expandSignal, collapseSignal }: {
   card: BuildCardType
+  isLatestFailing?: boolean
   onDismiss: (k: string) => void
   onOpenDetail: (card: BuildCardType) => void
+  onOpenDetailAtStage?: (card: BuildCardType, stage: string) => void
+  expandSignal?: number
+  collapseSignal?: number
 }) {
   const [expanded,      setExpanded]      = useState(true)
-  const [agentExpanded, setAgentExpanded] = useState(false)
+  const [agentExpanded, setAgentExpanded] = useState(!card.analysis)
+
+  useEffect(() => { if (expandSignal)   setExpanded(true)  }, [expandSignal])
+  useEffect(() => { if (collapseSignal) setExpanded(false) }, [collapseSignal])
   const [fixing,        setFixing]        = useState(false)
   const [modalOpen,     setModalOpen]     = useState(false)
+  const [copied,        setCopied]        = useState(false)
 
   const { analysis, fixResult, steps, dismissed } = card
   const isRunning  = !analysis && steps.some(s => s.status === 'running')
   const hasFailed  = steps.some(s => s.status === 'failed')
   const canAutoFix = analysis && !DIAGNOSTIC_TYPES.has(analysis.fix_type) &&
-                     analysis.confidence >= CONFIDENCE_THRESHOLD && !fixResult
+                     analysis.confidence >= CONFIDENCE_THRESHOLD && !fixResult && isLatestFailing
 
   async function applyFix() {
     if (!analysis) return
@@ -140,7 +155,7 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
         borderColor,
       )}
     >
-      <div className={cn('h-[2px] w-full bg-gradient-to-r', accentBar)} />
+      <div className={cn('w-full bg-gradient-to-r', accentBar, hasFailed ? 'h-[3px]' : 'h-[2px]')} />
 
       {/* Header */}
       <div
@@ -160,18 +175,29 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
           {card.job}
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          <Badge variant="muted"><Hash className="h-3 w-3" />{card.build}</Badge>
           {isRunning && <Badge variant="accent"><Loader2 className="h-3 w-3 animate-spin" />analyzing</Badge>}
           {analysis && !isRunning && (
-            <Badge variant={analysis.confidence >= CONFIDENCE_THRESHOLD ? 'success' : 'warning'}>
-              {Math.round(analysis.confidence * 100)}% conf
-            </Badge>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="w-16 h-1.5 rounded-full bg-accent-border/30 overflow-hidden">
+                <div
+                  className={cn('h-full rounded-full transition-all duration-500', analysis.confidence >= CONFIDENCE_THRESHOLD ? 'bg-success' : 'bg-warning')}
+                  style={{ width: `${Math.round(analysis.confidence * 100)}%` }}
+                />
+              </div>
+              <span className={cn('text-[11px] font-mono', analysis.confidence >= CONFIDENCE_THRESHOLD ? 'text-success' : 'text-warning')}>
+                {Math.round(analysis.confidence * 100)}%
+              </span>
+            </div>
           )}
           {fixResult && <Badge variant={fixResult.success ? 'success' : 'error'}>{fixResult.success ? 'fixed' : 'failed'}</Badge>}
         </div>
+        <span className="flex items-center gap-1 text-[10px] font-mono text-text-dim shrink-0">
+          <Clock className="h-3 w-3" strokeWidth={1.5} />
+          {fmtTime(card.createdAt)}
+        </span>
         <button
           onClick={e => { e.stopPropagation(); onDismiss(card.key) }}
-          className="ml-1 text-text-dim hover:text-text-muted transition-colors cursor-pointer"
+          className="ml-1 p-1 rounded-lg text-text-dim hover:text-text-primary hover:bg-overlay/50 transition-colors cursor-pointer"
         >
           <X className="h-4 w-4" strokeWidth={1.5} />
         </button>
@@ -183,7 +209,10 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
           {analysis?.pipeline_stages && analysis.pipeline_stages.length > 0 && (
             <div>
               <SectionLabel>Pipeline Stages</SectionLabel>
-              <PipelineStageRow stages={analysis.pipeline_stages} />
+              <PipelineStageRow
+                stages={analysis.pipeline_stages}
+                onStageClick={onOpenDetailAtStage ? s => onOpenDetailAtStage(card, s.name) : undefined}
+              />
             </div>
           )}
 
@@ -204,7 +233,13 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
 
           {analysis && (
             <div className="rounded-xl border border-accent-border/40 bg-overlay/30 p-4 space-y-3.5">
-              <InfoBlock label="Root Cause" text={analysis.root_cause} highlight />
+              <div className="flex items-center justify-between">
+                <SectionLabel>Root Cause</SectionLabel>
+                <span className="flex items-center gap-1 text-[11px] font-mono text-text-dim mb-2">
+                  <Hash className="h-3 w-3" />{card.build}
+                </span>
+              </div>
+              <p className="text-[13px] leading-relaxed text-text-primary font-medium -mt-1">{analysis.root_cause}</p>
               {analysis.steps && analysis.steps.length > 0 ? (
                 <div>
                   <SectionLabel>Fix Steps</SectionLabel>
@@ -227,28 +262,33 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
                   <SectionLabel>Log Excerpt</SectionLabel>
                   <button
                     onClick={() => onOpenDetail(card)}
-                    className="mt-1.5 w-full text-left rounded-xl border border-accent-border/30 bg-white px-3.5 py-3 group hover:border-accent/40 hover:bg-overlay/40 transition-colors cursor-pointer"
+                    className="mt-1.5 w-full text-left rounded-xl border border-accent-border/40 bg-overlay/40 hover:border-accent-border/70 hover:bg-overlay/60 transition-colors cursor-pointer overflow-hidden group"
                   >
-                    <pre className="text-[12px] font-mono text-text-muted leading-relaxed whitespace-pre-wrap overflow-hidden line-clamp-3 pointer-events-none">
-                      {analysis.log_excerpt}
-                    </pre>
-                    <p className="mt-2 text-[11px] font-mono text-accent group-hover:text-accent/80 transition-colors">
-                      View full logs →
-                    </p>
+                    <div className="flex">
+                      <div className="w-[3px] shrink-0 bg-error/50 rounded-l-xl" />
+                      <div className="px-3.5 py-3 flex-1 min-w-0">
+                        <pre className="text-[12px] font-mono text-text-base leading-relaxed whitespace-pre-wrap overflow-hidden line-clamp-3 pointer-events-none">
+                          {analysis.log_excerpt}
+                        </pre>
+                        <p className="mt-2 text-[11px] font-mono text-accent group-hover:text-accent/80 transition-colors">
+                          View full logs →
+                        </p>
+                      </div>
+                    </div>
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {analysis && !fixResult && (
+          {analysis && !fixResult && isLatestFailing && (
             <div className="flex items-center gap-2.5">
               {canAutoFix ? (
                 <Button
                   size="sm"
                   onClick={() => setModalOpen(true)}
                   disabled={fixing}
-                  className="gap-2 bg-success hover:bg-success/90 text-white font-semibold border-0 text-[13px] h-8 font-mono rounded-lg"
+                  className="gap-2 bg-success hover:bg-success/90 text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
                 >
                   {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
                   {fixing ? 'Applying…' : 'Apply Fix'}
@@ -259,11 +299,26 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
                   {DIAGNOSTIC_TYPES.has(analysis.fix_type) ? 'Requires manual action' : 'Low confidence — review recommended'}
                 </div>
               )}
+              {DIAGNOSTIC_TYPES.has(analysis.fix_type) && analysis.steps && analysis.steps.length > 0 && (
+                <button
+                  onClick={() => {
+                    const text = analysis.steps!.map((s, i) => `${i + 1}. ${s}`).join('\n')
+                    navigator.clipboard.writeText(text).then(() => {
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 2000)
+                    })
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-accent-border/50 text-[11px] font-mono text-text-muted hover:text-text-primary hover:bg-overlay/50 transition-colors cursor-pointer"
+                >
+                  {copied ? <Check className="h-3 w-3 text-success" strokeWidth={2} /> : <Copy className="h-3 w-3" strokeWidth={1.5} />}
+                  {copied ? 'Copied!' : 'Copy steps'}
+                </button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => onDismiss(card.key)}
-                className="ml-auto text-text-muted hover:text-text-primary text-[12px] h-8 font-mono border border-accent-border/40 rounded-lg"
+                className="ml-auto text-text-dim hover:text-text-muted text-[12px] h-9 font-mono rounded-lg hover:bg-overlay/50"
               >
                 Dismiss
               </Button>
@@ -283,12 +338,17 @@ export function BuildCard({ card, onDismiss, onOpenDetail }: {
 
           {fixResult && (
             <div className={cn(
-              'text-[12px] font-mono rounded-xl px-3.5 py-3 border leading-relaxed',
+              'text-[12px] font-mono rounded-xl px-3.5 py-3 border leading-relaxed space-y-1',
               fixResult.success
                 ? 'bg-success-dim text-success border-success-border'
                 : 'bg-error-dim text-error border-error-border'
             )}>
-              {fixResult.detail}
+              <span>{fixResult.detail}</span>
+              {fixResult.success && fixResult.next_build && (
+                <span className="block text-[11px] opacity-80">
+                  Build #{fixResult.next_build} queued
+                </span>
+              )}
             </div>
           )}
         </div>

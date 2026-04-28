@@ -1,5 +1,7 @@
-import { Settings, Server, GitBranch, Brain, Webhook, ExternalLink } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Settings, Server, GitBranch, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 interface SettingSection {
   icon: React.ElementType
@@ -113,6 +115,12 @@ export function SettingsPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
           ))}
         </div>
 
+        {/* LLM Status */}
+        <LlmStatus />
+
+        {/* Audit Log */}
+        <AuditLog />
+
         {/* Footer */}
         <div className="mt-8 pt-6 border-t border-accent-border/30 flex items-center gap-6">
           <a
@@ -135,6 +143,148 @@ export function SettingsPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
           </a>
         </div>
       </div>
+    </div>
+  )
+}
+
+type ProviderStatus = 'checking' | 'ok' | 'warn' | 'off'
+
+function LlmStatus() {
+  const [anthropic, setAnthropic] = useState<ProviderStatus>('checking')
+  const [ollama,    setOllama]    = useState<ProviderStatus>('checking')
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then(r => r.json())
+      .then(d => setAnthropic(d?.ok ? 'ok' : 'warn'))
+      .catch(() => setAnthropic('warn'))
+
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 3000)
+    fetch('http://localhost:11434/api/tags', { signal: ctrl.signal })
+      .then(r => { clearTimeout(timer); setOllama(r.ok ? 'ok' : 'off') })
+      .catch(() => { clearTimeout(timer); setOllama('off') })
+  }, [])
+
+  function StatusDot({ status, label, sublabel }: { status: ProviderStatus; label: string; sublabel: string }) {
+    return (
+      <div className="flex items-center justify-between px-5 py-3.5 hover:bg-overlay/20 transition-colors">
+        <div>
+          <span className="text-[12px] font-mono text-text-base">{label}</span>
+          <p className="text-[11px] font-mono text-text-dim mt-0.5">{sublabel}</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {status === 'checking' && <Circle className="h-3.5 w-3.5 text-text-dim animate-pulse" strokeWidth={1.5} />}
+          {status === 'ok'       && <CheckCircle2 className="h-3.5 w-3.5 text-success" strokeWidth={2} />}
+          {status === 'warn'     && <AlertTriangle className="h-3.5 w-3.5 text-warning" strokeWidth={2} />}
+          {status === 'off'      && <Circle className="h-3.5 w-3.5 text-text-dim" strokeWidth={1.5} />}
+          <span className={cn('text-[11px] font-mono', {
+            'text-text-dim': status === 'checking' || status === 'off',
+            'text-success':  status === 'ok',
+            'text-warning':  status === 'warn',
+          })}>
+            {status === 'checking' ? 'checking…'
+              : status === 'ok'   ? 'connected'
+              : status === 'warn' ? 'not configured'
+              : 'not running'}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl border border-accent-border/50 bg-white overflow-hidden shadow-card">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-accent-border/30 bg-overlay/30">
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white border border-accent-border/50">
+          <Brain className="h-4 w-4 text-accent" strokeWidth={1.75} />
+        </div>
+        <div>
+          <p className="text-[14px] font-bold text-text-primary leading-none">LLM Status</p>
+          <p className="text-[11px] font-mono text-text-muted mt-1 leading-none">Live provider availability</p>
+        </div>
+      </div>
+      <div className="divide-y divide-accent-border/20">
+        <StatusDot status={anthropic} label="Anthropic" sublabel="claude-haiku / claude-sonnet" />
+        <StatusDot status={ollama}    label="Ollama"    sublabel="localhost:11434" />
+      </div>
+    </div>
+  )
+}
+
+interface AuditEntry {
+  timestamp: string
+  fix_type: string
+  job_name: string
+  build_number: string
+  result: string
+}
+
+function AuditLog() {
+  const [entries, setEntries] = useState<AuditEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  function load() {
+    setLoading(true)
+    fetch('/api/audit?limit=20')
+      .then(r => r.json())
+      .then(data => setEntries(data.entries ?? []))
+      .catch(() => setEntries([]))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  return (
+    <div className="mt-6 rounded-2xl border border-accent-border/50 bg-white overflow-hidden shadow-card">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-accent-border/30 bg-overlay/30">
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white border border-accent-border/50">
+          <ClipboardList className="h-4 w-4 text-accent" strokeWidth={1.75} />
+        </div>
+        <div className="flex-1">
+          <p className="text-[14px] font-bold text-text-primary leading-none">Fix Audit Log</p>
+          <p className="text-[11px] font-mono text-text-muted mt-1 leading-none">Recent fix executions</p>
+        </div>
+        <button
+          onClick={load}
+          className="text-text-dim hover:text-text-primary transition-colors cursor-pointer"
+          title="Refresh"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} strokeWidth={1.75} />
+        </button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="px-5 py-6 text-[12px] font-mono text-text-dim text-center">
+          {loading ? 'Loading…' : 'No fix executions recorded yet.'}
+        </div>
+      ) : (
+        <div className="divide-y divide-accent-border/20">
+          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-5 py-2 bg-overlay/20">
+            {['Job / Build', 'Fix type', 'Result', 'Time'].map(h => (
+              <span key={h} className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em]">{h}</span>
+            ))}
+          </div>
+          {entries.map((e, i) => (
+            <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-5 py-2.5 hover:bg-overlay/20 transition-colors items-center">
+              <span className="text-[12px] font-mono text-text-base truncate">
+                {e.job_name} <span className="text-text-dim">#{e.build_number}</span>
+              </span>
+              <span className="text-[11px] font-mono text-text-muted">{e.fix_type}</span>
+              <span className={cn(
+                'text-[11px] font-mono rounded-full px-2 py-0.5 border',
+                e.result === 'success'
+                  ? 'text-success bg-success-dim border-success-border'
+                  : 'text-error bg-error-dim border-error-border',
+              )}>
+                {e.result}
+              </span>
+              <span className="text-[10px] font-mono text-text-dim whitespace-nowrap">
+                {new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

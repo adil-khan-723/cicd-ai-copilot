@@ -23,7 +23,7 @@ export default {
         // Text — warm slate
         'text-primary': '#1c1410',
         'text-base':    '#3d2c28',
-        'text-muted':   '#8c6e68',
+        'text-muted':   '#7a5c56',
         'text-dim':     '#c4a49e',
 
         // Accent — dusty rose
@@ -38,7 +38,7 @@ export default {
         success:        '#2d7d5f',
         'success-dim':  'rgba(45,125,95,0.08)',
         'success-border':'rgba(45,125,95,0.22)',
-        error:          '#c0392b',
+        error:          '#b83c2e',
         'error-dim':    'rgba(192,57,43,0.07)',
         'error-border': 'rgba(192,57,43,0.2)',
         warning:        '#b07d2a',

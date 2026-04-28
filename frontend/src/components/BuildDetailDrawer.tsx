@@ -11,11 +11,12 @@ import type { BuildCard, VerificationData, VerificationToolMismatch } from '@/ty
 interface BuildDetailDrawerProps {
   card: BuildCard | null
   onClose: () => void
+  scrollToStage?: string | null
 }
 
-type DrawerTab = 'logs' | 'crawler'
+type DrawerTab = 'logs' | 'crawler' | 'history'
 
-export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
+export function BuildDetailDrawer({ card, onClose, scrollToStage }: BuildDetailDrawerProps) {
   const [tab,      setTab]      = useState<DrawerTab>('logs')
   const [expanded, setExpanded] = useState(false)
 
@@ -89,7 +90,7 @@ export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
 
             {/* Tab bar */}
             <div className="flex items-center gap-1 px-4 py-2 border-b border-accent-border/40 shrink-0 bg-surface/80">
-              {(['logs', 'crawler'] as DrawerTab[]).map(t => (
+              {(['logs', 'crawler', 'history'] as DrawerTab[]).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -100,7 +101,7 @@ export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
                       : 'border-accent-border/30 bg-white/40 text-text-muted hover:text-text-base hover:bg-white/70 hover:border-accent-border/60',
                   )}
                 >
-                  {t === 'logs' ? 'Logs' : 'Tool Crawler'}
+                  {t === 'logs' ? 'Logs' : t === 'crawler' ? 'Tool Crawler' : 'History'}
                 </button>
               ))}
             </div>
@@ -112,10 +113,14 @@ export function BuildDetailDrawer({ card, onClose }: BuildDetailDrawerProps) {
                   job={String(card.job)}
                   build={Number(card.build)}
                   failedStage={card.analysis?.failed_stage}
+                  scrollToStage={scrollToStage ?? undefined}
                 />
               )}
               {tab === 'crawler' && (
                 <CrawlerTab verification={card.analysis?.verification} />
+              )}
+              {tab === 'history' && (
+                <HistoryTab job={String(card.job)} />
               )}
             </div>
           </motion.div>
@@ -166,15 +171,25 @@ interface LogsTabProps {
   job: string
   build: number
   failedStage?: string
+  scrollToStage?: string
 }
 
-function LogsTab({ job, build, failedStage }: LogsTabProps) {
+function LogsTab({ job, build, failedStage, scrollToStage }: LogsTabProps) {
   const [log, setLog]         = useState<string | null>(null)
   const [error, setError]     = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied]   = useState(false)
   const failedLineRef         = useRef<HTMLDivElement>(null)
   const scrollRef             = useRef<HTMLDivElement>(null)
+  const stageRefs             = useRef<Record<string, HTMLDivElement | null>>({})
+
+  // Scroll to requested stage when log loads or target changes
+  useEffect(() => {
+    const target = scrollToStage ?? failedStage
+    if (!target || !log) return
+    const el = stageRefs.current[target] ?? failedLineRef.current
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [scrollToStage, log, failedStage])
 
   const fetchLog = useCallback(() => {
     setLoading(true)
@@ -248,6 +263,13 @@ function LogsTab({ job, build, failedStage }: LogsTabProps) {
     }
   }
 
+  // Build map of stage name → line index for stage-click scroll
+  const stageLineMap: Record<string, number> = {}
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/\[Pipeline\] \{ \((.+?)\)/)
+    if (m) stageLineMap[m[1]] = i
+  }
+
   const inFailedRange = (i: number) => failedStart >= 0 && i >= failedStart && i <= failedEnd
 
   return (
@@ -283,10 +305,15 @@ function LogsTab({ job, build, failedStage }: LogsTabProps) {
         <div className="py-2">
           {lines.map((line, i) => {
             const isFirst = failedStart >= 0 && i === failedStart
+            const stageMatch = line.match(/\[Pipeline\] \{ \((.+?)\)/)
+            const stageName = stageMatch?.[1]
             return (
               <div
                 key={i}
-                ref={isFirst ? failedLineRef : undefined}
+                ref={el => {
+                  if (isFirst) (failedLineRef as React.MutableRefObject<HTMLDivElement | null>).current = el
+                  if (stageName) stageRefs.current[stageName] = el
+                }}
                 className={cn(
                   'flex items-start group',
                   inFailedRange(i)
@@ -307,6 +334,81 @@ function LogsTab({ job, build, failedStage }: LogsTabProps) {
             )
           })}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Build History Tab ────────────────────────────────────────────────────────
+
+interface BuildHistoryEntry {
+  number: number
+  result: string | null
+  timestamp: number
+  duration: number
+}
+
+function HistoryTab({ job }: { job: string }) {
+  const [builds,  setBuilds]  = useState<BuildHistoryEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    fetch(`/api/build-history?job=${encodeURIComponent(job)}`)
+      .then(async r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
+      .then(data => setBuilds(data.builds ?? []))
+      .catch(() => setError('No history available'))
+      .finally(() => setLoading(false))
+  }, [job])
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 className="h-5 w-5 text-text-dim animate-spin" strokeWidth={1.5} />
+    </div>
+  )
+
+  if (error || builds.length === 0) return (
+    <div className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center">
+      <AlertTriangle className="h-7 w-7 text-text-dim" strokeWidth={1.5} />
+      <p className="text-[13px] font-semibold text-text-base">{error ?? 'No builds recorded'}</p>
+      <p className="text-[12px] font-mono text-text-muted">History available after first build completes.</p>
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col h-full overflow-y-auto">
+      <div className="p-4 space-y-2">
+        <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.12em] mb-3">Last {builds.length} builds</p>
+        {builds.map(b => {
+          const passed = b.result === 'SUCCESS'
+          const failed = b.result === 'FAILURE'
+          const dur    = b.duration > 0 ? `${Math.round(b.duration / 1000)}s` : '—'
+          const date   = new Date(b.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          return (
+            <div key={b.number} className={cn(
+              'flex items-center gap-3 px-4 py-3 rounded-xl border',
+              passed ? 'border-success-border bg-success-dim' : failed ? 'border-error-border bg-error-dim' : 'border-accent-border/40 bg-white'
+            )}>
+              <span className={cn('text-[12px] font-mono font-semibold w-8 shrink-0',
+                passed ? 'text-success' : failed ? 'text-error' : 'text-text-muted'
+              )}>#{b.number}</span>
+              <span className={cn('text-[11px] font-mono rounded-full px-2 py-0.5 border shrink-0',
+                passed ? 'text-success bg-success-dim border-success-border'
+                : failed ? 'text-error bg-error-dim border-error-border'
+                : 'text-text-muted bg-overlay border-accent-border/40'
+              )}>
+                {b.result ?? 'in progress'}
+              </span>
+              <span className="text-[11px] font-mono text-text-dim flex-1">{date}</span>
+              <span className="text-[11px] font-mono text-text-dim shrink-0">{dur}</span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

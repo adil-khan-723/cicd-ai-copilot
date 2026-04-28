@@ -69,6 +69,17 @@ class EventBus:
         Uses call_soon_threadsafe when called from a background thread so
         asyncio.Queue is only touched from the event loop thread.
         """
+        # Drop duplicate analysis_complete events for same job+build — prevents
+        # double cards when both notification plugin and pipeline-failure endpoint fire.
+        if event.get("type") == "analysis_complete":
+            job, build = event.get("job"), event.get("build")
+            for past in self._history:
+                if (past.get("type") == "analysis_complete"
+                        and past.get("job") == job
+                        and past.get("build") == build):
+                    logger.debug("EventBus: dropped duplicate analysis_complete for %s #%s", job, build)
+                    return
+
         # Store in history immediately (deque is thread-safe for append)
         self._history.append(event)
 

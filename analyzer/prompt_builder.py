@@ -34,14 +34,14 @@ steps rules:
 - No vague steps like "configure as needed" or "update settings"
 
 fix_type rules:
-- retry: transient failure or infrastructure issue that may resolve on re-run (Docker daemon unreachable, socket permission errors, network hiccups)
+- retry: transient failure that may resolve on re-run (network hiccup, flaky test, Docker daemon momentarily unreachable). Do NOT use retry for permission denied errors — those are permanent until an admin fixes the system.
 - clear_cache: stale cache (Docker layer cache, npm, pip, Maven) is causing the issue
 - pull_image: Dockerfile FROM line has an invalid or nonexistent image tag — use this when the error is "manifest unknown", "not found", "does not exist", or any image pull failure. Set bad_image to the exact invalid tag as written in the FROM line, correct_image to the best valid replacement (use 'latest' or the closest stable tag if unsure). The agent patches the Dockerfile automatically. Do NOT use diagnostic_only for bad image tags — use pull_image.
 - increase_timeout: step timed out, needs longer timeout. Set bad_line to the exact timeout(...) line from the Jenkinsfile, correct_line to the fixed version with a sufficient value (at least 3x the sleep/wait duration if visible, otherwise 10 minutes)
 - configure_tool: tool name in Jenkinsfile does not match what is configured in Jenkins Global Tool Configuration — patch the Jenkinsfile to use the correct name
 - configure_credential: credential ID in Jenkinsfile does not exist in Jenkins — create the credential. Set credential_type based on how it is bound: string() → 'secret_text', usernamePassword() → 'username_password', sshUserPrivateKey() → 'ssh_key'
 - fix_step_typo: ANY Groovy/Jenkins syntax error in the Jenkinsfile — invalid DSL step name, wrong number of arguments, unexpected token, missing quotes, wrong method call syntax, MultipleCompilationErrorsException, "Expected a step", "No such DSL method", "unexpected token". Use this whenever the Jenkinsfile source code itself has a syntax or semantic error that can be fixed by editing a line. Set bad_line to the exact verbatim failing line, correct_line to the fixed version.
-- diagnostic_only: requires human intervention that cannot be automated (missing plugin, IAM policy, network issue, unknown error)
+- diagnostic_only: requires human intervention that cannot be automated (missing plugin, IAM policy, network issue, unknown error, permission denied on Docker socket or filesystem, access denied to any system resource)
 
 Verification findings (if present) are FACTS from the Jenkins API — not guesses.
 If a tool mismatch is listed, use fix_type=configure_tool.
