@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Sidebar } from '@/components/Sidebar'
 import { Topbar } from '@/components/Topbar'
 import { SetupWizard } from '@/components/SetupWizard'
@@ -227,10 +228,25 @@ export default function App() {
     return result
   })()
 
+  // Track panel switches to trigger fade overlay
+  const prevPanel = useRef<string>(activePanel)
+  const [fadeKey, setFadeKey] = useState(0)
+  useEffect(() => {
+    if (prevPanel.current !== activePanel) {
+      prevPanel.current = activePanel
+      setFadeKey(k => k + 1)
+    }
+  }, [activePanel])
+
   if (!bootDone) return null
 
   return (
-    <div className="flex h-screen overflow-hidden bg-bg">
+    <motion.div
+      className="flex h-screen overflow-hidden bg-bg"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.18, ease: 'easeOut' }}
+    >
       <SetupWizard
         visible={setupVisible}
         onClose={() => setSetupVisible(false)}
@@ -256,6 +272,17 @@ export default function App() {
           Chat messages, scroll position, and in-flight streams survive panel switches.
         */}
         <main className="flex-1 overflow-hidden relative">
+          {/* Panel switch fade overlay */}
+          <AnimatePresence>
+            <motion.div
+              key={fadeKey}
+              className="absolute inset-0 z-10 bg-bg pointer-events-none"
+              initial={{ opacity: 1 }}
+              animate={{ opacity: 0 }}
+              transition={{ duration: 0.15, ease: 'easeOut' }}
+            />
+          </AnimatePresence>
+
           <div className={activePanel === 'pipeline' ? 'h-full' : 'hidden'}>
             <PipelineFeed
               cards={cardList}
@@ -288,6 +315,6 @@ export default function App() {
         onClose={() => { setSelectedCard(null); setSelectedStage(null) }}
         scrollToStage={selectedStage}
       />
-    </div>
+    </motion.div>
   )
 }

@@ -8,10 +8,12 @@ Routes:
   POST /api/setup     — save credentials
   POST /api/chat      — agent chat (streaming)
   POST /api/fix       — execute approved fix
+  POST /api/commit    — commit generated pipeline to Jenkins
   POST /api/trigger   — trigger a Jenkins job manually
 """
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -381,6 +383,41 @@ async def fix(payload: FixPayload):
 
 
 # ── Audit log ─────────────────────────────────────────────────────────────
+
+def _slugify(text: str, max_len: int = 40) -> str:
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    text = re.sub(r"[\s]+", "-", text.strip())
+    text = re.sub(r"-+", "-", text)
+    return text[:max_len].rstrip("-")
+
+
+class CommitPayload(BaseModel):
+    platform: str
+    content: str
+    description: str
+    apply_to_jenkins: bool = False
+    job_name: Optional[str] = None
+
+
+@router.post("/api/commit")
+async def commit_pipeline(payload: CommitPayload):
+    from copilot.jenkins_configurator import create_job
+
+    job_name = payload.job_name.strip() if payload.job_name and payload.job_name.strip() else _slugify(payload.description)
+
+    if payload.platform == "jenkins" and payload.apply_to_jenkins:
+        try:
+            job_url = await asyncio.get_event_loop().run_in_executor(
+                None, create_job, job_name, payload.content, payload.description
+            )
+            return {"success": True, "job_name": job_name, "job_url": job_url, "detail": "Job created"}
+        except Exception as exc:
+            logger.error("commit_pipeline error: %s", exc)
+            return {"success": False, "job_name": job_name, "job_url": None, "detail": str(exc)}
+
+    return {"success": True, "job_name": job_name, "job_url": None, "detail": "Saved (not applied to Jenkins)"}
+
 
 @router.get("/api/audit")
 async def audit_log(limit: int = 20):

@@ -1,9 +1,12 @@
 # Current Priorities
 
-Last updated: 2026-04-22
+Last updated: 2026-04-28
 
 ## Active Build Phase
-**Phase 1 — Foundation** is the starting point.
+**Phase 4 (finishing) → Phase 5 → Phase 6**
+
+## GH Actions
+Explicitly out of scope until post-publication. Skip all GHA items in every phase.
 
 ## 6-Phase Build Plan
 
@@ -20,7 +23,7 @@ Last updated: 2026-04-22
 
 ### Phase 2 — Tool Verification Crawler
 - Jenkins crawler: parse Jenkinsfile tool refs, query Jenkins API, exact + fuzzy match
-- GitHub Actions crawler: parse workflow YAML, query GitHub API for secrets/runners
+- ~~GitHub Actions crawler~~ — skipped (post-publication)
 - Context builder merges logs + verification report (~850 tokens total)
 - Confidence threshold implementation
 
@@ -37,10 +40,10 @@ Last updated: 2026-04-22
 **Milestone:** User approves fixes via web UI, agent executes and reports result
 
 ### Phase 4 — Copilot Mode
-- Pipeline generator: Jenkins Groovy + GitHub Actions YAML
-- Base templates for common patterns
+- Pipeline generator: Jenkins Groovy ~~+ GitHub Actions YAML~~ — GHA skipped
+- Base templates for common patterns (Jenkins only)
 - Web UI chat command handler
-- Repo committer via GitHub API
+- ~~Repo committer via GitHub API~~ — GHA skipped
 - Jenkins configurator via API
 
 **Milestone:** Generate complete pipelines from natural language in the web UI

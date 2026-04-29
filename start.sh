@@ -271,7 +271,63 @@ else warn "JENKINS_URL not set — configure via Settings in the UI"; fi
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then ok "GitHub token set"
 else warn "GITHUB_TOKEN not set — Copilot commit mode disabled"; fi
 
-# ── 4b. Docker socket permissions for Jenkins-in-Docker ──────
+# ── 4b. Redis cache (optional, persistent LLM response cache) ────────────────
+_try_start_redis() {
+  if command -v redis-server &>/dev/null; then
+    redis-server --daemonize yes --loglevel warning &>/dev/null && sleep 1
+    if redis-cli ping &>/dev/null 2>&1; then
+      ok "Redis started (local install)"
+      export REDIS_URL="redis://localhost:6379"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+_install_redis() {
+  OS_TYPE="$(uname -s)"
+  case "$OS_TYPE" in
+    Darwin)
+      if command -v brew &>/dev/null; then
+        info "Installing Redis via Homebrew..."
+        brew install redis -q && return 0
+      fi ;;
+    Linux)
+      if command -v apt-get &>/dev/null; then
+        info "Installing Redis via apt..."
+        sudo apt-get install -y -q redis-server && return 0
+      elif command -v yum &>/dev/null; then
+        info "Installing Redis via yum..."
+        sudo yum install -y -q redis && return 0
+      fi ;;
+  esac
+  return 1
+}
+
+REDIS_URL="${REDIS_URL:-}"
+if [[ -z "$REDIS_URL" ]]; then
+  # Check if Redis already running
+  if redis-cli ping &>/dev/null 2>&1; then
+    ok "Redis already running"
+    export REDIS_URL="redis://localhost:6379"
+  else
+    echo ""
+    echo -e "${YLW}Redis not found.${RST} Install it for persistent LLM response caching (24hr TTL)?"
+    echo -e "${DIM}  Without Redis: in-memory cache only (lost on restart)${RST}"
+    read -r -p "  Install Redis? [y/N] " _redis_ans
+    if [[ "$(echo "$_redis_ans" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+      if _install_redis && _try_start_redis; then
+        ok "Redis ready — persistent cache enabled"
+      else
+        warn "Redis install failed — using in-memory cache"
+      fi
+    else
+      info "Skipping Redis — using in-memory cache"
+    fi
+  fi
+fi
+
+# ── 4d. Docker socket permissions for Jenkins-in-Docker ──────
 # When Jenkins runs inside a Docker container, the Docker socket is bind-mounted
 # from the host (macOS/Windows: Docker Desktop VM; Linux: host directly).
 # The Jenkins process needs read/write access to run docker build commands.

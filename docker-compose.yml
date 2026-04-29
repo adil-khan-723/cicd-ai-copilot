@@ -18,6 +18,10 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL_DOCKER:-http://host.docker.internal:11434}
       JENKINS_URL: ${JENKINS_URL_DOCKER:-http://host.docker.internal:8080}
       WEBHOOK_HOST: "0.0.0.0"
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
     command: uvicorn webhook.server:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app                      # live source mount for --reload
@@ -30,15 +34,19 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Optional Redis cache — uncomment when REDIS_URL is set in .env
-  # redis:
-  #   image: redis:7-alpine
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 volumes:
   audit_logs:
-  # redis_data:
+  redis_data:

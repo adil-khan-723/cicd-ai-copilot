@@ -1,5 +1,6 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
+from fastapi.testclient import TestClient
 from webhook.server import app
 
 MOCK_PAYLOAD = {
@@ -177,3 +178,10 @@ def test_notification_failure_fetches_jenkinsfile():
     assert 'jenkinsfile' in captured.get('payload', {}), \
         "Synthetic payload must contain jenkinsfile key"
     assert "pipeline {" in captured['payload']['jenkinsfile']
+
+
+def test_cache_cleared_on_startup():
+    """Cache must be cleared every time the app starts up."""
+    with patch("analyzer.cache.clear") as mock_clear:
+        with TestClient(app):
+            mock_clear.assert_called_once()

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import type { ChatMessage as Message } from '@/types'
+import { PipelineCommitModal } from '@/components/PipelineCommitModal'
 
 type HistoryEntry = { role: 'user' | 'assistant'; content: string }
 
@@ -64,8 +65,8 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ messages, setMessages, streaming, setStreaming }: ChatPanelProps) {
-  const [input,      setInput]      = useState('')
-  const [committing, setCommitting] = useState<string | null>(null)
+  const [input,        setInput]        = useState('')
+  const [commitTarget, setCommitTarget] = useState<Message | null>(null)
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -121,22 +122,10 @@ export function ChatPanel({ messages, setMessages, streaming, setStreaming }: Ch
     }
   }
 
-  async function commitPipeline(msg: Message) {
-    if (!msg.pipeline) return
-    setCommitting(msg.id)
-    try {
-      await fetch('/api/commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          platform:         msg.pipelinePlatform ?? 'jenkins',
-          content:          msg.pipeline,
-          description:      'Generated pipeline from Copilot chat',
-          apply_to_jenkins: msg.pipelinePlatform === 'jenkins',
-        }),
-      })
-      setMessages(m => m.map(x => x.id === msg.id ? { ...x, committed: true } : x))
-    } finally { setCommitting(null) }
+  function handleCommitted() {
+    if (!commitTarget) return
+    setMessages(m => m.map(x => x.id === commitTarget.id ? { ...x, committed: true } : x))
+    setCommitTarget(null)
   }
 
   return (
@@ -212,15 +201,11 @@ export function ChatPanel({ messages, setMessages, streaming, setStreaming }: Ch
                   <Button
                     variant="success"
                     size="sm"
-                    onClick={() => commitPipeline(msg)}
-                    disabled={committing === msg.id}
+                    onClick={() => setCommitTarget(msg)}
                     className="gap-1.5"
                   >
-                    {committing === msg.id
-                      ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : <GitBranch className="h-3 w-3" strokeWidth={2} />}
-                    Approve &amp; Commit
-                    {msg.pipelinePlatform === 'jenkins' ? ' + Apply to Jenkins' : ' to GitHub'}
+                    <GitBranch className="h-3 w-3" strokeWidth={2} />
+                    Approve &amp; Send to Jenkins
                   </Button>
                 )}
 
@@ -236,6 +221,15 @@ export function ChatPanel({ messages, setMessages, streaming, setStreaming }: Ch
         </AnimatePresence>
         <div ref={bottomRef} />
       </div>
+
+      <PipelineCommitModal
+        open={commitTarget !== null}
+        pipeline={commitTarget?.pipeline ?? ''}
+        platform={commitTarget?.pipelinePlatform ?? 'jenkins'}
+        description={commitTarget?.content.slice(0, 120) ?? 'Generated pipeline'}
+        onCommitted={handleCommitted}
+        onCancel={() => setCommitTarget(null)}
+      />
 
       {/* Input */}
       <div className="shrink-0 border-t border-glass p-3">

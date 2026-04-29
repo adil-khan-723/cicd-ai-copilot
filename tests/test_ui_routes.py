@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 from webhook.server import app
 
 
@@ -113,6 +113,70 @@ def test_build_log_not_found():
         response = client.get("/api/build-log?job=my-job&build=42")
 
     assert response.status_code == 404
+
+
+def test_commit_missing_fields_returns_422():
+    response = client.post("/api/commit", json={})
+    assert response.status_code == 422
+
+
+def test_commit_jenkins_success():
+    with patch("copilot.jenkins_configurator.create_job", return_value="http://jenkins/job/python-ci-pipeline/") as mock_create:
+        response = client.post("/api/commit", json={
+            "platform": "jenkins",
+            "content": "pipeline { stages { stage('Build') { steps { sh 'make' } } } }",
+            "description": "Python CI pipeline with Docker",
+            "apply_to_jenkins": True,
+        })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["job_name"] == "python-ci-pipeline-with-docker"
+    assert data["job_url"] == "http://jenkins/job/python-ci-pipeline/"
+    mock_create.assert_called_once()
+
+
+def test_commit_jenkins_failure_returns_success_false():
+    with patch("copilot.jenkins_configurator.create_job", side_effect=Exception("Jenkins unreachable")):
+        response = client.post("/api/commit", json={
+            "platform": "jenkins",
+            "content": "pipeline { stages { stage('Build') { steps { sh 'make' } } } }",
+            "description": "Python CI pipeline",
+            "apply_to_jenkins": True,
+        })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert "Jenkins unreachable" in data["detail"]
+
+
+def test_commit_slugifies_description():
+    with patch("copilot.jenkins_configurator.create_job", return_value="http://jenkins/job/my-node-app/"):
+        response = client.post("/api/commit", json={
+            "platform": "jenkins",
+            "content": "pipeline { stages { stage('Build') { steps { sh 'npm build' } } } }",
+            "description": "My Node.js App!! (v2) with Docker & ECR",
+            "apply_to_jenkins": True,
+        })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["job_name"] == "my-nodejs-app-v2-with-docker-ecr"
+
+
+def test_commit_explicit_job_name_overrides_slugify():
+    with patch("copilot.jenkins_configurator.create_job", return_value="http://jenkins/job/my-custom-name/") as mock_create:
+        response = client.post("/api/commit", json={
+            "platform": "jenkins",
+            "content": "pipeline { stages { stage('Build') { steps { sh 'make' } } } }",
+            "description": "Some long description that would slugify badly",
+            "apply_to_jenkins": True,
+            "job_name": "my-custom-name",
+        })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["job_name"] == "my-custom-name"
+    mock_create.assert_called_once_with("my-custom-name", ANY, ANY)
 
 
 def test_chat_handler_includes_history_with_role_labels():

@@ -82,13 +82,50 @@ class TestCache:
         analysis_cache.set("ctx", result)
         # Manually expire the entry
         key = analysis_cache.cache_key("ctx")
-        mod._cache[key]["expires_at"] = time.time() - 1
+        mod._mem[key]["expires_at"] = time.time() - 1
         assert analysis_cache.get("ctx") is None
 
     def test_clear_empties_cache(self):
         analysis_cache.set("ctx", {"root_cause": "X"})
         analysis_cache.clear()
         assert analysis_cache.get("ctx") is None
+
+
+class TestCacheRedisBackend:
+    """Cache falls back to in-memory when Redis is unavailable."""
+
+    def setup_method(self):
+        analysis_cache.clear()
+
+    def test_falls_back_to_memory_when_redis_unavailable(self):
+        with patch("analyzer.cache._redis_client", None):
+            analysis_cache.set("ctx", {"root_cause": "X"})
+            result = analysis_cache.get("ctx")
+        assert result is not None
+        assert result["root_cause"] == "X"
+
+    def test_uses_redis_when_available(self):
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        mock_redis.setex.return_value = True
+
+        with patch("analyzer.cache._redis_client", mock_redis):
+            analysis_cache.set("ctx", {"root_cause": "Y"})
+
+        mock_redis.setex.assert_called_once()
+
+    def test_redis_read_falls_back_to_memory_on_error(self):
+        mock_redis = MagicMock()
+        mock_redis.get.side_effect = Exception("Redis connection lost")
+
+        with patch("analyzer.cache._redis_client", mock_redis):
+            # pre-seed memory cache directly
+            import time, hashlib, json
+            key = hashlib.md5(b"ctx").hexdigest()
+            analysis_cache._mem[key] = {"result": {"root_cause": "Z"}, "expires_at": time.time() + 3600}
+            result = analysis_cache.get("ctx")
+
+        assert result["root_cause"] == "Z"
 
 
 class TestAnalyze:

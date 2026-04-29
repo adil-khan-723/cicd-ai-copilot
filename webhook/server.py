@@ -16,6 +16,10 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=getattr(logging, settings.log_level))
     logger.info("Webhook server started on port %s", settings.webhook_port)
 
+    from analyzer import cache as analysis_cache
+    analysis_cache.clear()
+    logger.info("LLM response cache cleared on startup")
+
     from ui.routes import _jenkins_health_monitor
     import ui.routes as _ui_routes
     _ui_routes._jenkins_monitor_task = asyncio.create_task(_jenkins_health_monitor())
