@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     logger.info("Webhook server started on port %s", settings.webhook_port)
 
     from analyzer import cache as analysis_cache
-    analysis_cache.clear()
+    analysis_cache.clear_all()
     logger.info("LLM response cache cleared on startup")
 
     from ui.routes import _jenkins_health_monitor

@@ -48,6 +48,9 @@ export default {
         running:        '#7b5ea7',
         'running-dim':  'rgba(123,94,167,0.08)',
         'running-border':'rgba(123,94,167,0.22)',
+
+        // glass token used in ProfilePicker
+        'glass-hi': 'rgba(180,100,80,0.15)',
       },
       fontFamily: {
         sans:    ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
@@ -90,13 +93,13 @@ export default {
         'gradient-sidebar': 'linear-gradient(180deg, #fff5f1 0%, #ffeee7 100%)',
         'gradient-accent':  'linear-gradient(135deg, #c9706a, #b85c56)',
         'gradient-card':    'linear-gradient(180deg, #ffffff 0%, #fffcfa 100%)',
-        'shimmer':          'linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent)',
+        shimmer:            'linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent)',
       },
       animation: {
         'fade-in':   'fadeIn 0.18s ease-out',
         'slide-up':  'slideUp 0.22s cubic-bezier(0.16,1,0.3,1)',
         'pulse-dot': 'pulseDot 2s ease-in-out infinite',
-        'shimmer':   'shimmer 1.8s infinite',
+        shimmer:     'shimmer 1.8s infinite',
       },
       keyframes: {
         fadeIn:   { from: { opacity: '0' }, to: { opacity: '1' } },

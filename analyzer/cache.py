@@ -1,7 +1,7 @@
 """
-MD5-keyed LLM response cache.
+MD5-keyed LLM response cache, scoped per active profile.
 Uses Redis when available (REDIS_URL in env), falls back to in-memory dict.
-TTL = 24 hours.
+TTL = 7 days. Cache is cleared on profile switch.
 """
 import hashlib
 import json
@@ -11,12 +11,11 @@ import time
 
 logger = logging.getLogger(__name__)
 
-_TTL_SECONDS = 604800  # 7 days — safety net; cache cleared on every startup anyway
+_TTL_SECONDS = 604800  # 7 days
 
-# In-memory fallback store: {md5_key: {"result": dict, "expires_at": float}}
+# In-memory fallback: {profile_id: {md5_key: {"result": dict, "expires_at": float}}}
 _mem: dict[str, dict] = {}
 
-# Redis client — None means use in-memory fallback
 _redis_client = None
 
 try:
@@ -34,51 +33,77 @@ except Exception as exc:
     _redis_client = None
 
 
+def _profile_id() -> str:
+    """Return active profile ID, or 'default' if none active."""
+    try:
+        from ui.profiles_store import get_active_profile
+        p = get_active_profile()
+        return p["id"] if p else "default"
+    except Exception:
+        return "default"
+
+
 def cache_key(context: str) -> str:
     return hashlib.md5(context.encode()).hexdigest()
 
 
 def get(context: str) -> dict | None:
     key = cache_key(context)
+    pid = _profile_id()
 
     if _redis_client is not None:
         try:
-            raw = _redis_client.get(f"llm:{key}")
+            raw = _redis_client.get(f"llm:{pid}:{key}")
             if raw:
-                logger.debug("Redis cache hit for key %s", key[:8])
+                logger.debug("Redis cache hit for profile=%s key=%s", pid[:8], key[:8])
                 return json.loads(raw)
         except Exception as exc:
             logger.warning("Redis get failed (%s) — trying memory cache", exc)
 
-    # Memory fallback
-    entry = _mem.get(key)
+    entry = _mem.get(pid, {}).get(key)
     if entry is None:
         return None
     if time.time() > entry["expires_at"]:
-        del _mem[key]
-        logger.debug("Memory cache expired for key %s", key[:8])
+        _mem.get(pid, {}).pop(key, None)
+        logger.debug("Memory cache expired for profile=%s key=%s", pid[:8], key[:8])
         return None
-    logger.debug("Memory cache hit for key %s", key[:8])
+    logger.debug("Memory cache hit for profile=%s key=%s", pid[:8], key[:8])
     return entry["result"]
 
 
 def set(context: str, result: dict) -> None:
     key = cache_key(context)
+    pid = _profile_id()
 
     if _redis_client is not None:
         try:
-            _redis_client.setex(f"llm:{key}", _TTL_SECONDS, json.dumps(result))
-            logger.debug("Redis cached key %s", key[:8])
+            _redis_client.setex(f"llm:{pid}:{key}", _TTL_SECONDS, json.dumps(result))
+            logger.debug("Redis cached profile=%s key=%s", pid[:8], key[:8])
             return
         except Exception as exc:
             logger.warning("Redis set failed (%s) — falling back to memory", exc)
 
-    _mem[key] = {"result": result, "expires_at": time.time() + _TTL_SECONDS}
-    logger.debug("Memory cached key %s", key[:8])
+    if pid not in _mem:
+        _mem[pid] = {}
+    _mem[pid][key] = {"result": result, "expires_at": time.time() + _TTL_SECONDS}
+    logger.debug("Memory cached profile=%s key=%s", pid[:8], key[:8])
 
 
 def clear() -> None:
-    """Clear all cache entries. Clears both Redis (if connected) and memory."""
+    """Clear cache for the active profile only."""
+    pid = _profile_id()
+    _mem.pop(pid, None)
+    if _redis_client is not None:
+        try:
+            keys = _redis_client.keys(f"llm:{pid}:*")
+            if keys:
+                _redis_client.delete(*keys)
+        except Exception as exc:
+            logger.warning("Redis clear failed: %s", exc)
+
+
+def clear_all() -> None:
+    """Clear cache for all profiles (used on startup)."""
     _mem.clear()
     if _redis_client is not None:
         try:
@@ -86,4 +111,4 @@ def clear() -> None:
             if keys:
                 _redis_client.delete(*keys)
         except Exception as exc:
-            logger.warning("Redis clear failed: %s", exc)
+            logger.warning("Redis clear_all failed: %s", exc)

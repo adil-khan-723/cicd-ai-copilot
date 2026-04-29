@@ -1,42 +1,38 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { useTheme } from '@/hooks/useTheme'
+import { useChatStore } from '@/hooks/useChatStore'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sidebar } from '@/components/Sidebar'
 import { Topbar } from '@/components/Topbar'
 import { SetupWizard } from '@/components/SetupWizard'
+import { ProfilePicker } from '@/components/ProfilePicker'
 import { PipelineFeed } from '@/components/PipelineFeed'
 import { ChatPanel } from '@/components/ChatPanel'
 import { JobsBrowser } from '@/components/JobsBrowser'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { BuildDetailDrawer } from '@/components/BuildDetailDrawer'
 import { useEventStream } from '@/hooks/useEventStream'
-import type { ActivePanel, BuildCard, ChatMessage, SSEEvent } from '@/types'
+import type { ActivePanel, BuildCard, SSEEvent } from '@/types'
 
 function makeKey(job: string, build: string | number) {
   return `${job}_${build}`
 }
 
 export default function App() {
-  const [activePanel,   setActivePanel]   = useState<ActivePanel>('pipeline')
-  const [setupVisible,  setSetupVisible]  = useState(false)
+  const { theme, toggle: toggleTheme } = useTheme()
+  const [activePanel,    setActivePanel]    = useState<ActivePanel>('pipeline')
+  const [setupVisible,   setSetupVisible]   = useState(false)
+  const [isConfigured,   setIsConfigured]   = useState(true)
+  const [profilePicking, setProfilePicking] = useState(false)
   const [repoName,      setRepoName]      = useState('')
   const [jenkinsStatus, setJenkinsStatus] = useState<'connected' | 'disconnected' | 'unknown'>('unknown')
   const [cards,         setCards]         = useState<Map<string, BuildCard>>(new Map())
   const [bootDone,      setBootDone]      = useState(false)
 
-  // ── Chat state lifted here so it survives panel switches ─────────────────
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
-    try {
-      const stored = localStorage.getItem('devops_ai_chat')
-      return stored ? JSON.parse(stored) : []
-    } catch { return [] }
-  })
-  const [chatStreaming,  setChatStreaming]  = useState(false)
-
-  useEffect(() => {
-    // Persist completed messages only (skip in-flight streaming)
-    const completed = chatMessages.filter(m => !m.isStreaming)
-    try { localStorage.setItem('devops_ai_chat', JSON.stringify(completed.slice(-50))) } catch {}
-  }, [chatMessages])
+  // ── Chat state — multi-session store keyed per profile ───────────────────
+  const [activeProfileId, setActiveProfileId] = useState<string>('')
+  const chatStore = useChatStore(activeProfileId)
+  const [chatStreaming, setChatStreaming] = useState(false)
 
   // ── Jobs wire-up state lifted so it survives panel switches ───────────────
   const [wireStatus, setWireStatus] = useState<Record<string, 'ok' | 'already' | 'err'>>({})
@@ -63,24 +59,22 @@ export default function App() {
 
   // Bootstrap: fetch server settings on load
   useEffect(() => {
-    fetch('/api/settings')
+    fetch('/api/profiles')
       .then(r => r.json())
       .then(data => {
-        if (data.github_repo) setRepoName(data.github_repo)
-        if (!data.configured && !localStorage.getItem('devops_ai_configured')) {
+        const profiles = data.profiles ?? []
+        if (profiles.length === 0) {
+          // No profiles yet — go straight to setup wizard
+          setIsConfigured(false)
           setSetupVisible(true)
-        }
-        if (data.github_repo) {
-          localStorage.setItem('devops_ai_configured', '1')
-          localStorage.setItem('devops_ai_repo', data.github_repo ?? '')
+        } else {
+          // Always show profile picker on load
+          setProfilePicking(true)
         }
       })
       .catch(() => {
-        if (!localStorage.getItem('devops_ai_configured')) {
-          setSetupVisible(true)
-        } else {
-          setRepoName(localStorage.getItem('devops_ai_repo') ?? '')
-        }
+        setIsConfigured(false)
+        setSetupVisible(true)
       })
       .finally(() => setBootDone(true))
 
@@ -182,7 +176,18 @@ export default function App() {
 
   function handleSetupSaved(repo: string) {
     setRepoName(repo)
+    setIsConfigured(true)
     setSetupVisible(false)
+    setProfilePicking(false)
+    checkJenkinsLiveness()
+  }
+
+  function handleProfileSelected(profileId: string) {
+    document.documentElement.classList.remove('dark')
+    setActiveProfileId(profileId)
+    setCards(new Map())
+    setIsConfigured(true)
+    setProfilePicking(false)
     checkJenkinsLiveness()
   }
 
@@ -240,6 +245,17 @@ export default function App() {
 
   if (!bootDone) return null
 
+  if (profilePicking) {
+    return (
+      <ProfilePicker
+        onSelect={handleProfileSelected}
+        onAddNew={() => { setProfilePicking(false); setSetupVisible(true) }}
+        theme={theme}
+        toggleTheme={toggleTheme}
+      />
+    )
+  }
+
   return (
     <motion.div
       className="flex h-screen overflow-hidden bg-bg"
@@ -249,7 +265,7 @@ export default function App() {
     >
       <SetupWizard
         visible={setupVisible}
-        onClose={() => setSetupVisible(false)}
+        onClose={() => { setSetupVisible(false); setProfilePicking(true) }}
         onSaved={handleSetupSaved}
       />
 
@@ -292,18 +308,19 @@ export default function App() {
               onDiscardJob={discardJob}
               onOpenDetail={c => { setSelectedCard(c); setSelectedStage(null) }}
               onOpenDetailAtStage={(c, stage) => { setSelectedCard(c); setSelectedStage(stage) }}
+              isConfigured={isConfigured}
+              onConfigure={() => setSetupVisible(true)}
             />
           </div>
           <div className={activePanel === 'chat' ? 'h-full' : 'hidden'}>
             <ChatPanel
-              messages={chatMessages}
-              setMessages={setChatMessages}
+              chatStore={chatStore}
               streaming={chatStreaming}
               setStreaming={setChatStreaming}
             />
           </div>
           <div className={activePanel === 'jobs' ? 'h-full' : 'hidden'}>
-            <JobsBrowser onJenkinsStatus={setJenkinsStatus} wireStatus={wireStatus} onWireStatus={handleWireStatus} />
+            <JobsBrowser onJenkinsStatus={setJenkinsStatus} wireStatus={wireStatus} onWireStatus={handleWireStatus} isConfigured={isConfigured} onConfigure={() => setSetupVisible(true)} />
           </div>
           <div className={activePanel === 'settings' ? 'h-full' : 'hidden'}>
             <SettingsPanel onOpenSetup={() => setSetupVisible(true)} />

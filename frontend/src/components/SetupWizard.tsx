@@ -14,14 +14,15 @@ interface SetupWizardProps {
 
 export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWizardProps) {
   const [form, setForm] = useState<SetupFormData>({
+    alias:         initialData?.alias         ?? '',
     jenkins_url:   initialData?.jenkins_url   ?? '',
     jenkins_user:  initialData?.jenkins_user  ?? '',
     jenkins_token: initialData?.jenkins_token ?? '',
   })
-  const [error,            setError]            = useState('')
-  const [loading,          setLoading]          = useState(false)
-  const [saved,            setSaved]            = useState(false)
-  const [jenkinsTestState, setJenkinsTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [error,             setError]             = useState('')
+  const [loading,           setLoading]           = useState(false)
+  const [saved,             setSaved]             = useState(false)
+  const [jenkinsTestState,  setJenkinsTestState]  = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
   const [jenkinsTestDetail, setJenkinsTestDetail] = useState('')
 
   async function testJenkins() {
@@ -51,9 +52,10 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
   }
 
   async function handleSave() {
+    if (!form.alias.trim()) { setError('Profile name is required'); return }
     setLoading(true); setError('')
     try {
-      const res = await fetch('/api/setup', {
+      const res = await fetch('/api/profiles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -62,8 +64,10 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
         const body = await res.json()
         setError(body.detail ?? 'Setup failed'); return
       }
+      // activate the new profile
+      const { profile } = await res.json()
+      await fetch(`/api/profiles/${profile.id}/activate`, { method: 'POST' })
       setSaved(true)
-      localStorage.setItem('devops_ai_configured', '1')
       setTimeout(() => { onSaved(''); setSaved(false) }, 700)
     } catch {
       setError('Network error — is the server running?')
@@ -100,12 +104,20 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                   <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
                 </div>
                 <div>
-                  <h2 className="text-sm font-semibold text-text-primary">Project Setup</h2>
-                  <p className="text-[11px] text-text-muted mt-0.5">Connect Jenkins</p>
+                  <h2 className="text-sm font-semibold text-text-primary">Add Jenkins Account</h2>
+                  <p className="text-[11px] text-text-muted mt-0.5">Connect a Jenkins instance</p>
                 </div>
               </div>
 
               <div className="space-y-5">
+                {/* Profile name */}
+                <Input
+                  label="Profile name"
+                  placeholder="e.g. Production, Staging, Client A"
+                  value={form.alias}
+                  onChange={set('alias')}
+                />
+
                 {/* Jenkins */}
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
@@ -158,7 +170,7 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                       The <span className="text-text-primary font-medium">API Token</span> is not
                       your Jenkins password. Get one at{' '}
                       <em className="not-italic text-info">
-                        Jenkins → User → Configure → API Token → Add new Token
+                        [Your name] (top-right) → Security → API Token → Add new Token → Generate
                       </em>.
                     </p>
                   </div>

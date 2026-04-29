@@ -80,9 +80,10 @@ class TestCache:
         import analyzer.cache as mod
         result = {"root_cause": "X"}
         analysis_cache.set("ctx", result)
-        # Manually expire the entry
+        # Manually expire the entry — _mem is now {profile_id: {key: entry}}
         key = analysis_cache.cache_key("ctx")
-        mod._mem[key]["expires_at"] = time.time() - 1
+        pid = analysis_cache._profile_id()
+        mod._mem[pid][key]["expires_at"] = time.time() - 1
         assert analysis_cache.get("ctx") is None
 
     def test_clear_empties_cache(self):
@@ -119,10 +120,13 @@ class TestCacheRedisBackend:
         mock_redis.get.side_effect = Exception("Redis connection lost")
 
         with patch("analyzer.cache._redis_client", mock_redis):
-            # pre-seed memory cache directly
-            import time, hashlib, json
+            # pre-seed memory cache directly — _mem is {profile_id: {key: entry}}
+            import time, hashlib
             key = hashlib.md5(b"ctx").hexdigest()
-            analysis_cache._mem[key] = {"result": {"root_cause": "Z"}, "expires_at": time.time() + 3600}
+            pid = analysis_cache._profile_id()
+            if pid not in analysis_cache._mem:
+                analysis_cache._mem[pid] = {}
+            analysis_cache._mem[pid][key] = {"result": {"root_cause": "Z"}, "expires_at": time.time() + 3600}
             result = analysis_cache.get("ctx")
 
         assert result["root_cause"] == "Z"

@@ -54,8 +54,8 @@ def save_credentials(payload: dict) -> None:
 
     _write_env(mapping)
 
-    from config import get_settings
-    get_settings.cache_clear()
+    from config import settings as _cfg
+    _cfg._settings = None  # reset manual singleton so next call re-reads .env
 
     logger.info("Setup credentials saved for jenkins=%s", payload["jenkins_url"])
 

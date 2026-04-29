@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Activity, Terminal, Trash2, Zap, ChevronsDownUp, ChevronsUpDown, ArrowDownUp } from 'lucide-react'
+import { Activity, Terminal, Trash2, Zap, ChevronsDownUp, ChevronsUpDown, ArrowDownUp, AlertTriangle } from 'lucide-react'
 import { BuildCard, SuccessBuildCard } from './BuildCard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -20,9 +20,11 @@ interface PipelineFeedProps {
   onDiscardJob:         (job: string) => void
   onOpenDetail:         (card: BuildCardType) => void
   onOpenDetailAtStage?: (card: BuildCardType, stage: string) => void
+  isConfigured?:        boolean
+  onConfigure?:         () => void
 }
 
-export function PipelineFeed({ cards, latestFailingKeys, onDismiss, onClearAll, onDiscardJob, onOpenDetail, onOpenDetailAtStage }: PipelineFeedProps) {
+export function PipelineFeed({ cards, latestFailingKeys, onDismiss, onClearAll, onDiscardJob, onOpenDetail, onOpenDetailAtStage, isConfigured = true, onConfigure }: PipelineFeedProps) {
   const [activeJob,      setActiveJob]      = useState<string>('all')
   const [sortMode,       setSortMode]       = useState<SortMode>('newest')
   const [statusFilter,   setStatusFilter]   = useState<StatusFilter>('all')
@@ -106,6 +108,22 @@ export function PipelineFeed({ cards, latestFailingKeys, onDismiss, onClearAll, 
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-bg">
+
+      {/* Jenkins not configured banner */}
+      {!isConfigured && (
+        <div className="flex items-center gap-3 px-5 py-2.5 bg-warning/10 border-b border-warning/30 shrink-0">
+          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" strokeWidth={2} />
+          <span className="text-[12px] font-mono text-warning flex-1">
+            Jenkins not configured — build monitoring and fix execution are disabled.
+          </span>
+          <button
+            onClick={onConfigure}
+            className="text-[11px] font-mono font-semibold text-warning underline underline-offset-2 hover:opacity-80 transition-opacity cursor-pointer"
+          >
+            Configure →
+          </button>
+        </div>
+      )}
 
       {/* Toolbar row 1 */}
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-accent-border/40 shrink-0 bg-surface">

@@ -98,6 +98,7 @@ export interface JenkinsJob {
 }
 
 export interface SetupFormData {
+  alias: string
   jenkins_url: string
   jenkins_user: string
   jenkins_token: string
@@ -117,4 +118,12 @@ export interface ChatMessage extends ChatHistoryEntry {
   pipelinePlatform?: 'jenkins' | 'github'
   committed?: boolean
   isStreaming?: boolean
+}
+
+export interface ChatSession {
+  id: string
+  title: string          // auto-set from first user message (40 chars)
+  createdAt: number
+  updatedAt: number
+  messages: ChatMessage[]
 }

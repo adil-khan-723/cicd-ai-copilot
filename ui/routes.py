@@ -272,6 +272,67 @@ async def settings():
     }
 
 
+# ── Jenkins profiles ───────────────────────────────────────────────────────
+
+class ProfilePayload(BaseModel):
+    alias: str
+    jenkins_url: str
+    jenkins_user: str
+    jenkins_token: str
+
+
+@router.get("/api/profiles")
+async def get_profiles():
+    from ui.profiles_store import list_profiles
+    return {"profiles": list_profiles()}
+
+
+@router.post("/api/profiles")
+async def create_profile(payload: ProfilePayload):
+    from ui.profiles_store import add_profile
+    from ui.setup_handler import SetupError
+    try:
+        profile = add_profile(
+            alias=payload.alias,
+            jenkins_url=payload.jenkins_url,
+            jenkins_user=payload.jenkins_user,
+            jenkins_token=payload.jenkins_token,
+        )
+        return {"ok": True, "profile": profile}
+    except SetupError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/api/profiles/{profile_id}/activate")
+async def activate_profile(profile_id: str):
+    from ui.profiles_store import activate_profile
+    ok = activate_profile(profile_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"ok": True}
+
+
+@router.delete("/api/profiles/{profile_id}")
+async def delete_profile(profile_id: str):
+    from ui.profiles_store import delete_profile
+    ok = delete_profile(profile_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"ok": True}
+
+
+@router.patch("/api/profiles/{profile_id}")
+async def rename_profile(profile_id: str, body: dict):
+    from ui.profiles_store import update_profile
+    alias = body.get("alias", "").strip()
+    if not alias:
+        raise HTTPException(status_code=422, detail="alias is required")
+    ok = update_profile(profile_id, alias)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"ok": True}
+
+
 # ── Credential test-connection ─────────────────────────────────────────────
 
 class TestConnectionPayload(BaseModel):
