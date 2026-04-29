@@ -102,9 +102,15 @@ def _parse_github(payload: dict) -> FailureContext:
     )
 
 
-_ERROR_PATTERN = re.compile(r"\b(ERROR|FAILED|Exception|Error:|fatal|FAILURE)\b", re.IGNORECASE)
+_ERROR_PATTERN = re.compile(
+    r"\b(ERROR|FAILED|Exception|Error:|fatal|FAILURE|permission denied|exit code [1-9]|npm ERR|pip.*error|maven.*error|gradle.*error|Connection refused|No such file|command not found)\b",
+    re.IGNORECASE,
+)
+# Lines that indicate a stage was skipped (not the root failure)
+_SKIP_PATTERN = re.compile(r"skipped due to earlier failure", re.IGNORECASE)
 # Matches both [Pipeline] { (Name) (declarative) and [Pipeline] stage (Name) (scripted)
 _STAGE_PATTERN = re.compile(r"\[Pipeline\]\s+(?:\{\s*|stage\s*)\(([^)]+)\)")
+_STAGE_CLOSE_RE = re.compile(r"^\[Pipeline\]\s+\}")
 
 
 def _extract_jenkins_stage(log: str) -> str:
@@ -116,30 +122,55 @@ def _extract_jenkins_stage(log: str) -> str:
     if not log:
         return "unknown-stage"
 
-    # Split log into (stage_name, block_text) pairs
     lines = log.splitlines()
     stages: list[tuple[str, list[str]]] = []
     current_stage: str | None = None
     current_block: list[str] = []
+    # Track brace depth inside the current stage so footer lines (after all
+    # stages close) are NOT attributed to the last stage.  Each stage open
+    # "[Pipeline] { (Name)" increments depth; "[Pipeline] }" decrements it.
+    depth = 0
 
     for line in lines:
-        match = _STAGE_PATTERN.search(line)
-        if match:
+        stripped = line.rstrip()
+        open_match = _STAGE_PATTERN.search(stripped)
+
+        if open_match:
+            name = open_match.group(1).strip()
             if current_stage is not None:
                 stages.append((current_stage, current_block))
-            current_stage = match.group(1).strip()
+            current_stage = name
             current_block = [line]
-        else:
-            if current_stage is not None:
+            depth = 1
+        elif current_stage is not None:
+            if _STAGE_CLOSE_RE.match(stripped):
+                depth -= 1
+                if depth <= 0:
+                    # Stage fully closed — seal it, stop collecting
+                    stages.append((current_stage, current_block))
+                    current_stage = None
+                    current_block = []
+                    depth = 0
+                else:
+                    current_block.append(line)
+            else:
                 current_block.append(line)
 
+    # Append any stage that never got a close brace (malformed/truncated log)
     if current_stage is not None:
         stages.append((current_stage, current_block))
 
     if not stages:
         return "unknown-stage"
 
-    # Return the first stage whose block contains an error keyword
+    # Return the first stage whose block contains an error keyword AND was not
+    # merely skipped because of an earlier failure (skip text also matches ERROR_PATTERN).
+    for name, block in stages:
+        text = "\n".join(block)
+        if _ERROR_PATTERN.search(text) and not _SKIP_PATTERN.search(text):
+            return name
+
+    # Fallback: any stage with an error keyword (including skip-annotated ones)
     for name, block in stages:
         if _ERROR_PATTERN.search("\n".join(block)):
             return name
