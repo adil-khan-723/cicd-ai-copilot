@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Bot, User, CheckCircle2, Loader2, GitBranch, Sparkles } from 'lucide-react'
+import { Send, Bot, User, CheckCircle2, Loader2, GitBranch, Sparkles, Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
@@ -30,6 +30,27 @@ function detectPipeline(text: string): { platform: 'jenkins' | 'github' | null; 
   return { platform: null, code: null }
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  function handleCopy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy code"
+      className="flex items-center gap-1 text-[10px] font-mono text-text-dim hover:text-text-primary transition-colors px-1.5 py-0.5 rounded"
+    >
+      {copied
+        ? <><Check className="h-3 w-3 text-success" strokeWidth={2.5} /><span className="text-success">Copied</span></>
+        : <><Copy className="h-3 w-3" strokeWidth={1.5} /><span>Copy</span></>}
+    </button>
+  )
+}
+
 function MessageContent({ content }: { content: string }) {
   const parts = content.split(/(```[\s\S]*?```)/g)
   return (
@@ -40,11 +61,12 @@ function MessageContent({ content }: { content: string }) {
           const code = part.replace(/^```\w*\n?/, '').replace(/\n?```$/, '')
           return (
             <div key={i} className="rounded-lg border border-glass overflow-hidden">
-              {lang && (
-                <div className="px-3 py-1.5 bg-white/5 border-b border-glass flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-text-dim uppercase tracking-widest">{lang}</span>
-                </div>
-              )}
+              <div className="px-3 py-1.5 bg-white/5 border-b border-glass flex items-center justify-between gap-2">
+                {lang
+                  ? <span className="text-[10px] font-mono text-text-dim uppercase tracking-widest">{lang}</span>
+                  : <span />}
+                <CopyButton text={code} />
+              </div>
               <pre className="px-3 py-2.5 text-[11px] font-mono text-text-primary bg-bg/60 overflow-x-auto leading-relaxed whitespace-pre">
                 {code}
               </pre>

@@ -12,12 +12,14 @@ import re
 import jenkins
 from config import get_settings
 from agent.models import FixResult
+from copilot.secrets_manager import scrub, audit_secret_used
 
 logger = logging.getLogger(__name__)
 
 
 def _get_jenkins_server() -> jenkins.Jenkins:
     s = get_settings()
+    audit_secret_used("system", "jenkins_token")
     return jenkins.Jenkins(s.jenkins_url, username=s.jenkins_user, password=s.jenkins_token)
 
 
@@ -30,10 +32,10 @@ def retry_pipeline(job_name: str, build_number: str = "0") -> FixResult:
         return FixResult(success=True, fix_type="retry", detail=f"Job '{job_name}' re-queued.")
     except jenkins.JenkinsException as e:
         logger.error("Failed to retry job %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="retry", detail=str(e))
+        return FixResult(success=False, fix_type="retry", detail=scrub(str(e)))
     except Exception as e:
         logger.error("Unexpected error retrying %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="retry", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="retry", detail=scrub(f"Unexpected error: {e}"))
 
 
 def clear_docker_cache(job_name: str, build_number: str = "0") -> FixResult:
@@ -53,9 +55,9 @@ def clear_docker_cache(job_name: str, build_number: str = "0") -> FixResult:
             raise
     except jenkins.JenkinsException as e:
         logger.error("Failed to clear Docker cache for %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="clear_cache", detail=str(e))
+        return FixResult(success=False, fix_type="clear_cache", detail=scrub(str(e)))
     except Exception as e:
-        return FixResult(success=False, fix_type="clear_cache", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="clear_cache", detail=scrub(f"Unexpected error: {e}"))
 
 
 def clear_npm_cache(job_name: str, build_number: str = "0") -> FixResult:
@@ -72,9 +74,9 @@ def clear_npm_cache(job_name: str, build_number: str = "0") -> FixResult:
                 return FixResult(success=True, fix_type="clear_cache", detail=f"Job '{job_name}' re-triggered (no parameters defined — plain retry).")
             raise
     except jenkins.JenkinsException as e:
-        return FixResult(success=False, fix_type="clear_cache", detail=str(e))
+        return FixResult(success=False, fix_type="clear_cache", detail=scrub(str(e)))
     except Exception as e:
-        return FixResult(success=False, fix_type="clear_cache", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="clear_cache", detail=scrub(f"Unexpected error: {e}"))
 
 
 def pull_fresh_image(
@@ -152,10 +154,10 @@ def pull_fresh_image(
             detail=f"Job '{job_name}' retriggered (no image patch — re-run may resolve transient pull failure).",
         )
     except jenkins.JenkinsException as e:
-        return FixResult(success=False, fix_type="pull_image", detail=str(e))
+        return FixResult(success=False, fix_type="pull_image", detail=scrub(str(e)))
     except Exception as e:
         logger.error("pull_fresh_image unexpected error for %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="pull_image", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="pull_image", detail=scrub(f"Unexpected error: {e}"))
 
 
 def increase_timeout(
@@ -245,9 +247,9 @@ def increase_timeout(
             detail="Could not locate timeout in Jenkinsfile or job config — increase manually.",
         )
     except jenkins.JenkinsException as e:
-        return FixResult(success=False, fix_type="increase_timeout", detail=str(e))
+        return FixResult(success=False, fix_type="increase_timeout", detail=scrub(str(e)))
     except Exception as e:
-        return FixResult(success=False, fix_type="increase_timeout", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="increase_timeout", detail=scrub(f"Unexpected error: {e}"))
 
 
 def configure_tool(
@@ -312,9 +314,9 @@ def configure_tool(
         )
     except jenkins.JenkinsException as e:
         logger.error("configure_tool failed for %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="configure_tool", detail=str(e))
+        return FixResult(success=False, fix_type="configure_tool", detail=scrub(str(e)))
     except Exception as e:
-        return FixResult(success=False, fix_type="configure_tool", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="configure_tool", detail=scrub(f"Unexpected error: {e}"))
 
 
 def fix_step_typo(
@@ -433,10 +435,10 @@ def fix_step_typo(
         )
     except jenkins.JenkinsException as e:
         logger.error("fix_step_typo failed for %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="fix_step_typo", detail=str(e))
+        return FixResult(success=False, fix_type="fix_step_typo", detail=scrub(str(e)))
     except Exception as e:
         logger.error("fix_step_typo unexpected error for %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="fix_step_typo", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="fix_step_typo", detail=scrub(f"Unexpected error: {e}"))
 
 
 def configure_credential(
@@ -533,7 +535,7 @@ def configure_credential(
         )
     except jenkins.JenkinsException as e:
         logger.error("configure_credential failed for %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="configure_credential", detail=str(e))
+        return FixResult(success=False, fix_type="configure_credential", detail=scrub(str(e)))
     except Exception as e:
         logger.error("configure_credential unexpected error for %s: %s", job_name, e)
-        return FixResult(success=False, fix_type="configure_credential", detail=f"Unexpected error: {e}")
+        return FixResult(success=False, fix_type="configure_credential", detail=scrub(f"Unexpected error: {e}"))

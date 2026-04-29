@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings, Server, GitBranch, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle } from 'lucide-react'
+import { Settings, Server, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -19,15 +19,6 @@ const SECTIONS: SettingSection[] = [
       { label: 'Endpoint', value: 'Configured in .env' },
       { label: 'Webhook', value: 'POST /webhook/jenkins-notification' },
       { label: 'Setup', value: './start.sh --setup-jenkins' },
-    ],
-  },
-  {
-    icon: GitBranch,
-    title: 'GitHub',
-    desc: 'Repository integration',
-    items: [
-      { label: 'Token', value: 'Configured in .env' },
-      { label: 'Commits', value: 'Via GitHub API' },
     ],
   },
   {
@@ -118,6 +109,9 @@ export function SettingsPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
         {/* LLM Status */}
         <LlmStatus />
 
+        {/* Security Status */}
+        <SecurityStatus />
+
         {/* Audit Log */}
         <AuditLog />
 
@@ -207,6 +201,75 @@ function LlmStatus() {
       <div className="divide-y divide-accent-border/20">
         <StatusDot status={anthropic} label="Anthropic" sublabel="claude-haiku / claude-sonnet" />
         <StatusDot status={ollama}    label="Ollama"    sublabel="localhost:11434" />
+      </div>
+    </div>
+  )
+}
+
+function SecurityStatus() {
+  const [webhookSet, setWebhookSet] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(d => setWebhookSet(d?.webhook_secret_set ?? false))
+      .catch(() => setWebhookSet(false))
+  }, [])
+
+  type RowStatus = 'checking' | 'ok' | 'warn'
+
+  function SecurityRow({ label, sublabel, status }: { label: string; sublabel: string; status: RowStatus }) {
+    return (
+      <div className="flex items-center justify-between px-5 py-3.5 hover:bg-overlay/20 transition-colors">
+        <div>
+          <span className="text-[12px] font-mono text-text-base">{label}</span>
+          <p className="text-[11px] font-mono text-text-dim mt-0.5">{sublabel}</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {status === 'checking' && <Circle className="h-3.5 w-3.5 text-text-dim animate-pulse" strokeWidth={1.5} />}
+          {status === 'ok'       && <CheckCircle2 className="h-3.5 w-3.5 text-success" strokeWidth={2} />}
+          {status === 'warn'     && <AlertTriangle className="h-3.5 w-3.5 text-warning" strokeWidth={2} />}
+          <span className={cn('text-[11px] font-mono', {
+            'text-text-dim': status === 'checking',
+            'text-success':  status === 'ok',
+            'text-warning':  status === 'warn',
+          })}>
+            {status === 'checking' ? 'checking…' : status === 'ok' ? 'active' : 'NOT SET'}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const webhookStatus: RowStatus = webhookSet === null ? 'checking' : webhookSet ? 'ok' : 'warn'
+
+  return (
+    <div className="mt-6 rounded-2xl border border-accent-border/50 bg-white overflow-hidden shadow-card">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-accent-border/30 bg-overlay/30">
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white border border-accent-border/50">
+          <Shield className="h-4 w-4 text-accent" strokeWidth={1.75} />
+        </div>
+        <div>
+          <p className="text-[14px] font-bold text-text-primary leading-none">Security</p>
+          <p className="text-[11px] font-mono text-text-muted mt-1 leading-none">Credential safety controls</p>
+        </div>
+      </div>
+      <div className="divide-y divide-accent-border/20">
+        <SecurityRow
+          label="Webhook secret"
+          sublabel="HMAC signature validation on incoming events"
+          status={webhookStatus}
+        />
+        <SecurityRow
+          label="Credential scrubbing"
+          sublabel="Tokens redacted from all error messages and logs"
+          status="ok"
+        />
+        <SecurityRow
+          label="Audit trail"
+          sublabel="Every credential access recorded (names only)"
+          status="ok"
+        />
       </div>
     </div>
   )

@@ -98,8 +98,6 @@ export interface JenkinsJob {
 }
 
 export interface SetupFormData {
-  github_repo: string
-  github_token: string
   jenkins_url: string
   jenkins_user: string
   jenkins_token: string

@@ -4,15 +4,21 @@ import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
-from config import get_settings, validate_config
+from config import get_settings, validate_config, warn_security_config
 
 logger = logging.getLogger(__name__)
+
+
+def _scrub_err(e: Exception) -> str:
+    from copilot.secrets_manager import scrub
+    return scrub(str(e))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     validate_config(settings)
+    warn_security_config(settings)
     logging.basicConfig(level=getattr(logging, settings.log_level))
     logger.info("Webhook server started on port %s", settings.webhook_port)
 
@@ -602,7 +608,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
                 "job": payload.get("job_name", "unknown"),
                 "build": str(payload.get("build_number", "0")),
                 "stage": "PIPELINE_ERROR",
-                "detail": f"Internal error: {e}",
+                "detail": f"Internal error: {_scrub_err(e)}",
                 "status": "failed",
             })
         except Exception:

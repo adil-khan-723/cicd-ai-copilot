@@ -268,7 +268,76 @@ async def settings():
         "jenkins_user": s.jenkins_user,
         "llm_provider": s.llm_provider,
         "configured": bool(s.jenkins_url and s.jenkins_token),
+        "webhook_secret_set": bool(s.webhook_secret),  # boolean only — never the value
     }
+
+
+# ── Credential test-connection ─────────────────────────────────────────────
+
+class TestConnectionPayload(BaseModel):
+    provider: str  # "jenkins" | "anthropic" | "ollama"
+
+
+@router.post("/api/secrets/test-connection")
+async def test_connection(payload: TestConnectionPayload):
+    """
+    Test connectivity for a provider using the current settings.
+    Stores nothing. Returns scrubbed error detail on failure.
+    """
+    from copilot.secrets_manager import scrub
+    from config import get_settings
+    import requests as _req
+
+    s = get_settings()
+    provider = payload.provider.lower().strip()
+
+    if provider == "jenkins":
+        def _ping():
+            if not s.jenkins_url or not s.jenkins_token:
+                return False, "Jenkins not configured — set JENKINS_URL and JENKINS_TOKEN."
+            try:
+                r = _req.get(
+                    s.jenkins_url.rstrip("/") + "/api/json",
+                    auth=(s.jenkins_user or "", s.jenkins_token),
+                    timeout=6,
+                )
+                if r.status_code < 500:
+                    return True, "Jenkins reachable."
+                return False, scrub(f"HTTP {r.status_code}: {r.text[:120]}")
+            except Exception as e:
+                return False, scrub(str(e))
+
+        loop = asyncio.get_event_loop()
+        ok, detail = await loop.run_in_executor(None, _ping)
+        return {"ok": ok, "detail": detail}
+
+    if provider == "anthropic":
+        def _check():
+            try:
+                from providers.anthropic_provider import AnthropicProvider
+                available = AnthropicProvider().is_available()
+                return available, "Anthropic reachable." if available else "Anthropic key invalid or unreachable."
+            except Exception as e:
+                return False, scrub(str(e))
+
+        loop = asyncio.get_event_loop()
+        ok, detail = await loop.run_in_executor(None, _check)
+        return {"ok": ok, "detail": detail}
+
+    if provider == "ollama":
+        def _check():
+            try:
+                from providers.ollama_provider import OllamaProvider
+                available = OllamaProvider().is_available()
+                return available, "Ollama reachable." if available else "Ollama not reachable — is it running?"
+            except Exception as e:
+                return False, scrub(str(e))
+
+        loop = asyncio.get_event_loop()
+        ok, detail = await loop.run_in_executor(None, _check)
+        return {"ok": ok, "detail": detail}
+
+    return {"ok": False, "detail": "Unknown provider — use 'jenkins', 'anthropic', or 'ollama'."}
 
 
 # ── Fix execution ──────────────────────────────────────────────────────────

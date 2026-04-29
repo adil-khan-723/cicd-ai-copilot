@@ -26,6 +26,8 @@ class AnthropicProvider(BaseLLMProvider):
 
     def _get_client(self) -> anthropic_sdk.Anthropic:
         if self._client is None:
+            from copilot.secrets_manager import audit_secret_used
+            audit_secret_used("system", "anthropic_api_key")
             self._client = anthropic_sdk.Anthropic(api_key=self._settings.anthropic_api_key)
         return self._client
 

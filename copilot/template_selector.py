@@ -10,9 +10,16 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 _JENKINS_RULES: list[tuple[set[str], str]] = [
     ({"python", "ecr", "aws"},          "jenkins/python-docker-ecr.groovy"),
     ({"python", "docker", "ecr"},       "jenkins/python-docker-ecr.groovy"),
+    ({"java", "maven", "ecr"},          "jenkins/java-maven.groovy"),
+    ({"java", "maven", "docker"},       "jenkins/java-maven.groovy"),
     ({"node", "docker"},                "jenkins/node-docker.groovy"),
     ({"nodejs", "docker"},              "jenkins/node-docker.groovy"),
     ({"javascript", "docker"},          "jenkins/node-docker.groovy"),
+    ({"java", "maven"},                 "jenkins/java-maven.groovy"),
+    ({"java", "gradle"},                "jenkins/java-maven.groovy"),
+    ({"java", "spring"},                "jenkins/java-maven.groovy"),
+    ({"java"},                          "jenkins/java-maven.groovy"),
+    ({"maven"},                         "jenkins/java-maven.groovy"),
     ({"python"},                        "jenkins/python-docker-ecr.groovy"),
     ({"docker"},                        "jenkins/node-docker.groovy"),
 ]

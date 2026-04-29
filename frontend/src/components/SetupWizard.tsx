@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Info, Loader2, CheckCircle2, Github, Server, XCircle } from 'lucide-react'
+import { Zap, Info, Loader2, CheckCircle2, Server, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { SetupFormData } from '@/types'
@@ -14,8 +14,6 @@ interface SetupWizardProps {
 
 export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWizardProps) {
   const [form, setForm] = useState<SetupFormData>({
-    github_repo:   initialData?.github_repo   ?? '',
-    github_token:  initialData?.github_token  ?? '',
     jenkins_url:   initialData?.jenkins_url   ?? '',
     jenkins_user:  initialData?.jenkins_user  ?? '',
     jenkins_token: initialData?.jenkins_token ?? '',
@@ -24,16 +22,24 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
   const [loading,          setLoading]          = useState(false)
   const [saved,            setSaved]            = useState(false)
   const [jenkinsTestState, setJenkinsTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [jenkinsTestDetail, setJenkinsTestDetail] = useState('')
 
   async function testJenkins() {
     if (!form.jenkins_url.trim()) return
     setJenkinsTestState('testing')
+    setJenkinsTestDetail('')
     try {
-      const r = await fetch('/api/health')
+      const r = await fetch('/api/secrets/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'jenkins' }),
+      })
       const data = await r.json()
       setJenkinsTestState(data?.ok ? 'ok' : 'fail')
+      if (!data?.ok && data?.detail) setJenkinsTestDetail(data.detail)
     } catch {
       setJenkinsTestState('fail')
+      setJenkinsTestDetail('Network error')
     }
   }
 
@@ -58,8 +64,7 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
       }
       setSaved(true)
       localStorage.setItem('devops_ai_configured', '1')
-      localStorage.setItem('devops_ai_repo', form.github_repo)
-      setTimeout(() => { onSaved(form.github_repo); setSaved(false) }, 700)
+      setTimeout(() => { onSaved(''); setSaved(false) }, 700)
     } catch {
       setError('Network error — is the server running?')
     } finally {
@@ -96,34 +101,11 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                 </div>
                 <div>
                   <h2 className="text-sm font-semibold text-text-primary">Project Setup</h2>
-                  <p className="text-[11px] text-text-muted mt-0.5">Connect GitHub and Jenkins</p>
+                  <p className="text-[11px] text-text-muted mt-0.5">Connect Jenkins</p>
                 </div>
               </div>
 
               <div className="space-y-5">
-                {/* GitHub */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Github className="h-3.5 w-3.5 text-text-dim" />
-                    <span className="text-[10px] font-semibold text-text-muted uppercase tracking-widest">GitHub</span>
-                  </div>
-                  <Input
-                    label="Repository"
-                    placeholder="owner/repo"
-                    value={form.github_repo}
-                    onChange={set('github_repo')}
-                  />
-                  <Input
-                    label="Personal Access Token"
-                    type="password"
-                    placeholder="ghp_... or github_pat_..."
-                    value={form.github_token}
-                    onChange={set('github_token')}
-                  />
-                </div>
-
-                <div className="border-t border-glass" />
-
                 {/* Jenkins */}
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
@@ -144,7 +126,11 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                         {jenkinsTestState === 'ok'      && <CheckCircle2 className="h-3 w-3 text-success" strokeWidth={2} />}
                         {jenkinsTestState === 'fail'    && <XCircle className="h-3 w-3 text-error" strokeWidth={2} />}
                         <span className={`text-[10px] font-mono ${jenkinsTestState === 'ok' ? 'text-success' : jenkinsTestState === 'fail' ? 'text-error' : 'text-text-dim'}`}>
-                          {jenkinsTestState === 'testing' ? 'Connecting…' : jenkinsTestState === 'ok' ? 'Connected' : 'Cannot reach Jenkins'}
+                          {jenkinsTestState === 'testing'
+                            ? 'Connecting…'
+                            : jenkinsTestState === 'ok'
+                            ? 'Connected'
+                            : jenkinsTestDetail || 'Cannot reach Jenkins'}
                         </span>
                       </div>
                     )}

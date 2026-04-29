@@ -27,13 +27,23 @@ class TestTemplateSelector:
         name, content = select_jenkins_template("node.js docker build push")
         assert "node-docker" in name
 
+    def test_java_maven_selects_java_maven(self):
+        name, content = select_jenkins_template("java maven build and test")
+        assert "java-maven" in name
+        assert "mvn" in content
+
+    def test_java_spring_selects_java_maven(self):
+        name, content = select_jenkins_template("spring boot java application")
+        assert "java-maven" in name
+
     def test_unknown_falls_back_to_generic(self):
         name, content = select_jenkins_template("deploy my rust application to k8s")
         assert "generic" in name
 
     def test_list_templates_jenkins(self):
         templates = list_templates("jenkins")
-        assert len(templates) >= 3
+        assert len(templates) >= 4
+        assert any("java-maven" in t for t in templates)
         assert any("generic" in t for t in templates)
 
     def test_list_templates_unknown_platform(self):

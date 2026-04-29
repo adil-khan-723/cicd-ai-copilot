@@ -4,12 +4,10 @@ import { X, GitBranch, ChevronRight, CheckCircle2, AlertTriangle, Loader2 } from
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-// Detect ALL_CAPS_SNAKE placeholders (YOUR_X or any UPPER_SNAKE 3+ chars)
+// Detect only explicit YOUR_* placeholders — avoids false positives on Jenkins/Groovy built-ins
 function detectPlaceholders(code: string): string[] {
-  const matches = code.match(/\bYOUR_[A-Z_]+\b|\b[A-Z][A-Z0-9_]{2,}\b/g) ?? []
-  // dedupe, filter common Groovy/Jenkins keywords
-  const IGNORE = new Set(['ECR', 'AWS', 'CI', 'CD', 'SSH', 'GIT', 'NPM', 'URL', 'API', 'ENV', 'PATH', 'JAVA', 'HOME'])
-  return [...new Set(matches)].filter(p => p.includes('_') || p.startsWith('YOUR_') || !IGNORE.has(p))
+  const matches = code.match(/\bYOUR_[A-Z][A-Z0-9_]*\b/g) ?? []
+  return [...new Set(matches)]
 }
 
 function substituteValues(code: string, values: Record<string, string>): string {
