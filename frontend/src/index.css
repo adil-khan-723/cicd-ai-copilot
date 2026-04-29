@@ -4,6 +4,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── CSS variable tokens — used only by ProfilePicker entrance page ── */
+:root {
+  --c-bg:           #fdf8f5;
+  --c-card:         #ffffff;
+  --c-overlay:      #fdeee8;
+  --c-text-primary: #1c1410;
+  --c-text-base:    #3d2c28;
+  --c-text-muted:   #7a5c56;
+  --c-text-dim:     #c4a49e;
+  --c-accent:       #c9706a;
+  --c-accent-border:rgba(201,112,106,0.22);
+  --c-success:      #2d7d5f;
+  --c-error:        #b83c2e;
+}
+
+html.dark {
+  --c-bg:           #0e0e0e;
+  --c-card:         #1a1a1a;
+  --c-overlay:      #1f1f1f;
+  --c-text-primary: #f0f0f0;
+  --c-text-base:    #c8c8c8;
+  --c-text-muted:   #888888;
+  --c-text-dim:     #444444;
+  --c-accent:       #c9706a;
+  --c-accent-border:rgba(201,112,106,0.25);
+  --c-success:      #3aaa7a;
+  --c-error:        #e05545;
+}
+
+/* ── Base ──────────────────────────────────────────────────── */
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
 
@@ -29,16 +59,15 @@
   ::-webkit-scrollbar-thumb { background: rgba(180,100,80,0.18); border-radius: 10px; }
   ::-webkit-scrollbar-thumb:hover { background: rgba(180,100,80,0.3); }
 
-  /* Selection */
   ::selection { background: rgba(201,112,106,0.18); color: #1c1410; }
 }
 
+/* ── Utilities ─────────────────────────────────────────────── */
 @layer utilities {
   .dot-pulse {
     animation: pulseDot 2s ease-in-out infinite;
   }
 
-  /* Subtle warm grain texture on sidebar */
   .sidebar-texture {
     background-image:
       url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E"),

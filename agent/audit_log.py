@@ -46,7 +46,7 @@ def log_fix(
         "confidence_at_trigger": round(confidence_at_trigger, 4),
     }
 
-    path = get_settings().audit_log_path
+    path = _audit_path()
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
@@ -55,12 +55,20 @@ def log_fix(
         logger.error("Failed to write audit log entry: %s", e)
 
 
+def _audit_path() -> str:
+    configured = get_settings().audit_log_path
+    if configured:
+        return configured
+    from ui.profiles_store import get_active_profile_dir
+    return str(get_active_profile_dir() / "audit.log")
+
+
 def read_recent(n: int = 50) -> list[dict]:
     """
     Return the last n entries from the audit log (most recent last).
     Returns empty list if the log doesn't exist yet.
     """
-    path = get_settings().audit_log_path
+    path = _audit_path()
     try:
         with open(path, encoding="utf-8") as f:
             lines = f.readlines()

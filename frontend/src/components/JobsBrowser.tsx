@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { RefreshCw, Play, Loader2, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react'
+import { RefreshCw, Play, Loader2, CheckCircle2, XCircle, AlertCircle, Clock, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JenkinsJob } from '@/types'
@@ -9,6 +9,8 @@ interface JobsBrowserProps {
   onJenkinsStatus?: (s: 'connected' | 'disconnected' | 'unknown') => void
   wireStatus?:      Record<string, 'ok' | 'already' | 'err'>
   onWireStatus?:    (name: string, status: 'ok' | 'already' | 'err') => void
+  isConfigured?:    boolean
+  onConfigure?:     () => void
 }
 
 const STATUS_CONFIG: Record<string, {
@@ -43,7 +45,7 @@ const STATUS_CONFIG: Record<string, {
   },
 }
 
-export function JobsBrowser({ onJenkinsStatus, wireStatus = {} }: JobsBrowserProps) {
+export function JobsBrowser({ onJenkinsStatus, wireStatus = {}, isConfigured = true, onConfigure }: JobsBrowserProps) {
   const [jobs,       setJobs]       = useState<JenkinsJob[]>([])
   const [loading,    setLoading]    = useState(false)
   const [triggering, setTriggering] = useState<string | null>(null)
@@ -85,6 +87,21 @@ export function JobsBrowser({ onJenkinsStatus, wireStatus = {} }: JobsBrowserPro
 
   return (
     <div className="flex flex-col h-full bg-bg">
+      {/* Jenkins not configured banner */}
+      {!isConfigured && (
+        <div className="flex items-center gap-3 px-5 py-2.5 bg-warning/10 border-b border-warning/30 shrink-0">
+          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0" strokeWidth={2} />
+          <span className="text-[12px] font-mono text-warning flex-1">
+            Jenkins not configured — job list and fix execution are disabled.
+          </span>
+          <button
+            onClick={onConfigure}
+            className="text-[11px] font-mono font-semibold text-warning underline underline-offset-2 hover:opacity-80 transition-opacity cursor-pointer"
+          >
+            Configure →
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div className="px-6 py-5 border-b border-accent-border/40 shrink-0 bg-surface">
         <div className="flex items-center justify-between mb-4">

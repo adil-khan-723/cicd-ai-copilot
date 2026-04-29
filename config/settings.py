@@ -43,9 +43,12 @@ class Settings(BaseSettings):
     cache_ttl: int = Field(default=3600)
     redis_url: str = Field(default="")
 
+    # Data directory — profiles, audit log, cache
+    data_dir: str = Field(default="")
+
     # Logging
     log_level: str = Field(default="INFO")
-    audit_log_path: str = Field(default="audit.log")
+    audit_log_path: str = Field(default="")  # resolved at runtime via DATA_DIR if empty
 
 
 def get_settings() -> Settings:

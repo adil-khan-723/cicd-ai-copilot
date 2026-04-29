@@ -25,7 +25,7 @@ export function Topbar({ activePanel, repoName, jenkinsStatus }: TopbarProps) {
         <p className="text-[11px] font-mono text-text-dim mt-1 leading-none">{sub}</p>
       </div>
 
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-3">
         {repoName && (
           <a
             href={`https://github.com/${repoName}`}

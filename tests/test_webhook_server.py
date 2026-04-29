@@ -182,6 +182,6 @@ def test_notification_failure_fetches_jenkinsfile():
 
 def test_cache_cleared_on_startup():
     """Cache must be cleared every time the app starts up."""
-    with patch("analyzer.cache.clear") as mock_clear:
+    with patch("analyzer.cache.clear_all") as mock_clear:
         with TestClient(app):
             mock_clear.assert_called_once()

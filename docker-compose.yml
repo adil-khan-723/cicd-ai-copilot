@@ -6,6 +6,9 @@
 # Prerequisites:
 #   cp .env.example .env  # fill in tokens
 #   docker-compose up
+#
+# Data directory (profiles, audit log):
+#   Default: ~/.devops-ai/  Override: DATA_DIR=/your/path in .env
 
 services:
   webhook:
@@ -19,13 +22,14 @@ services:
       JENKINS_URL: ${JENKINS_URL_DOCKER:-http://host.docker.internal:8080}
       WEBHOOK_HOST: "0.0.0.0"
       REDIS_URL: "redis://redis:6379"
+      DATA_DIR: "/data"
     depends_on:
       redis:
         condition: service_healthy
     command: uvicorn webhook.server:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app                      # live source mount for --reload
-      - audit_logs:/app/logs
+      - ${DATA_DIR:-~/.devops-ai}:/data   # persistent profiles + audit log
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -48,5 +52,4 @@ services:
       retries: 3
 
 volumes:
-  audit_logs:
   redis_data:

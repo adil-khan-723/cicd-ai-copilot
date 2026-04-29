@@ -105,5 +105,12 @@ class EventBus:
             pass
 
 
+    def clear_history(self) -> None:
+        """Discard all buffered events — called on profile switch so the new
+        profile starts with a clean feed instead of seeing another profile's events."""
+        self._history.clear()
+        logger.debug("EventBus: history cleared for profile switch")
+
+
 # Module-level singleton shared across webhook and UI routes
 bus = EventBus()

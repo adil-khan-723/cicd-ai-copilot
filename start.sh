@@ -247,6 +247,12 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
   unset _kc_key
 fi
 
+# ── 4a. Data directory (profiles, audit log) ─────────────────
+DATA_DIR="${DATA_DIR:-$HOME/.devops-ai}"
+mkdir -p "$DATA_DIR"
+export DATA_DIR
+ok "Data directory: $DATA_DIR"
+
 # Provider checks (non-fatal)
 LLM_PROVIDER="${LLM_PROVIDER:-ollama}"
 info "LLM provider: $LLM_PROVIDER"
