@@ -43,6 +43,8 @@ fix_type rules:
 - fix_step_typo: ANY Groovy/Jenkins syntax error in the Jenkinsfile — invalid DSL step name, wrong number of arguments, unexpected token, missing quotes, wrong method call syntax, MultipleCompilationErrorsException, "Expected a step", "No such DSL method", "unexpected token". Use this whenever the Jenkinsfile source code itself has a syntax or semantic error that can be fixed by editing a line. Set bad_line to the exact verbatim failing line, correct_line to the fixed version.
 - diagnostic_only: requires human intervention that cannot be automated (missing plugin, IAM policy, network issue, unknown error, permission denied on Docker socket or filesystem, access denied to any system resource)
 
+Multiple issues rule: when the failure has BOTH a fixable issue (fix_step_typo, configure_credential, etc.) AND a manual issue (permission denied, missing plugin), pick the fixable fix_type. Add the manual issue as an extra step at the end of steps[]. Never let a manual side-issue force diagnostic_only when a code fix is available.
+
 Verification findings (if present) are FACTS from the Jenkins API — not guesses.
 If a tool mismatch is listed, use fix_type=configure_tool.
 If a missing credential is listed, use fix_type=configure_credential.
@@ -67,6 +69,7 @@ Failing Stage Source (if present) is the EXACT Groovy code from the Jenkinsfile 
 - If there is any Groovy syntax error (MultipleCompilationErrorsException, "Expected a step", unexpected token, wrong argument count, invalid method call), use fix_type=fix_step_typo, set bad_line and correct_line.
 - bad_line must be copied verbatim from the Jenkinsfile source — do not paraphrase or shorten it.
 - correct_line must be the minimal fix: change only what is wrong, preserve indentation and surrounding syntax.
+- 'checkout scm' in a non-Multibranch Pipeline is fix_step_typo. bad_line='checkout scm', correct_line='git url: "<your-repo-url>", branch: "<branch-name>"'.
 - If a tool name in the source does not match Verification Findings, use fix_type=configure_tool.
 - If a credentialsId in the source is not in Verification Findings as configured, use fix_type=configure_credential.
 """
