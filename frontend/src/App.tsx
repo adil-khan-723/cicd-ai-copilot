@@ -198,8 +198,12 @@ export default function App() {
 
   function handleProfileSelected(profileId: string) {
     document.documentElement.classList.remove('dark')
+    // Only wipe cards when switching profiles — not on initial selection
+    if (activeProfileId && activeProfileId !== profileId) {
+      setCards(new Map())
+      localStorage.removeItem('pipeline_feed_cards')
+    }
     setActiveProfileId(profileId)
-    setCards(new Map())
     setIsConfigured(true)
     setProfilePicking(false)
     checkJenkinsLiveness()
