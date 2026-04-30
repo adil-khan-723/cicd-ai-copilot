@@ -75,6 +75,29 @@ def test_api_fix_executes_and_returns_result():
     assert response.json()["success"] is True
 
 
+def test_api_fix_credential_fields_pass_through():
+    with patch("agent.fix_executor.execute_fix") as mock_fix, \
+         patch("agent.audit_log.log_fix"):
+        mock_fix.return_value = MagicMock(
+            success=True, fix_type="configure_credential", detail="created"
+        )
+        response = client.post("/api/fix", json={
+            "fix_type": "configure_credential",
+            "job_name": "my-job",
+            "build_number": "1",
+            "credential_id": "MY_TOKEN",
+            "credential_type": "secret_text",
+            "secret_value": "s3cr3t",
+            "username": None,
+            "password": None,
+            "ssh_username": None,
+            "private_key": None,
+        })
+    assert response.status_code == 200
+    call_kwargs = mock_fix.call_args[1]
+    assert call_kwargs.get("secret_value") == "s3cr3t"
+
+
 def test_build_log_returns_text():
     mock_server = MagicMock()
     mock_server.get_build_console_output.return_value = "Started by user admin\n[Pipeline] Start of Pipeline\n"

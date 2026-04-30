@@ -415,6 +415,12 @@ class FixPayload(BaseModel):
     bad_image: Optional[str] = None
     correct_image: Optional[str] = None
     credential_type: Optional[str] = None
+    secret_value: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    ssh_username: Optional[str] = None
+    private_key: Optional[str] = None
+    skip_retrigger: Optional[str] = None
 
 
 @router.post("/api/fix")
@@ -440,6 +446,18 @@ async def fix(payload: FixPayload):
         kwargs["correct_image"] = payload.correct_image
     if payload.credential_type:
         kwargs["credential_type"] = payload.credential_type
+    if payload.secret_value:
+        kwargs["secret_value"] = payload.secret_value
+    if payload.username:
+        kwargs["username"] = payload.username
+    if payload.password:
+        kwargs["password"] = payload.password
+    if payload.ssh_username:
+        kwargs["ssh_username"] = payload.ssh_username
+    if payload.private_key:
+        kwargs["private_key"] = payload.private_key
+    if payload.skip_retrigger == "true":
+        kwargs["skip_retrigger"] = True
 
     # Fallback: for configure_tool with missing names, parse from console log
     if payload.fix_type == "configure_tool" and (not kwargs.get("referenced_name") or not kwargs.get("configured_name")):
