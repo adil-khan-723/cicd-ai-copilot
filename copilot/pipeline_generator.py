@@ -30,6 +30,8 @@ Rules:
   Never use lowercase kebab placeholders like your-server-ip.
 - Never use 'checkout scm' — it only works in Multibranch Pipelines. Always use:
   git(url: 'YOUR_REPO_URL', branch: 'YOUR_BRANCH', credentialsId: 'YOUR_GIT_CREDENTIALS_ID')
+- Never generate YOUR_ORG_NAME, YOUR_GITHUB_ORG, or YOUR_GITHUB_USERNAME as separate placeholders.
+  The full repository URL (YOUR_REPO_URL) already contains the org/username. One placeholder for the full URL.
 """
 
 

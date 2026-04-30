@@ -70,6 +70,7 @@ Failing Stage Source (if present) is the EXACT Groovy code from the Jenkinsfile 
 - bad_line must be copied verbatim from the Jenkinsfile source — do not paraphrase or shorten it.
 - correct_line must be the minimal fix: change only what is wrong, preserve indentation and surrounding syntax.
 - 'checkout scm' in a non-Multibranch Pipeline is fix_step_typo. bad_line='checkout scm', correct_line='git url: "<your-repo-url>", branch: "<branch-name>"'.
+- Wrong branch name (e.g. branch 'main' does not exist, branch not found, invalid refspec) is fix_step_typo. Set bad_line to the exact git(...) line containing the wrong branch, correct_line to the same line with branch: "<branch-name>" so the user can supply the correct one.
 - If a tool name in the source does not match Verification Findings, use fix_type=configure_tool.
 - If a credentialsId in the source is not in Verification Findings as configured, use fix_type=configure_credential.
 """
