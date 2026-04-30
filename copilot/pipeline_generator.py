@@ -16,6 +16,12 @@ _SYSTEM_PROMPT = """\
 You are an expert Jenkins pipeline engineer.
 Your task: generate a complete, production-ready Declarative Jenkinsfile.
 
+CRITICAL — read before writing any code:
+1. NEVER write `checkout scm`. It is BROKEN in standard pipelines (only works in Multibranch).
+   ALWAYS replace it with:
+   git(url: 'YOUR_REPO_URL', branch: 'YOUR_BRANCH', credentialsId: 'YOUR_GIT_CREDENTIALS_ID')
+   This applies even when the base template shows `checkout scm` — replace it.
+
 Rules:
 - Output ONLY the Jenkinsfile content — no markdown fences, no explanation, no prose.
 - Start with: pipeline {
@@ -28,11 +34,12 @@ Rules:
   use SCREAMING_SNAKE_CASE placeholders prefixed with YOUR_. Examples:
   YOUR_DOCKERHUB_USERNAME, YOUR_SERVER_IP, YOUR_APP_NAME, YOUR_ECR_REPO.
   Never use lowercase kebab placeholders like your-server-ip.
-- Never use 'checkout scm' — it only works in Multibranch Pipelines. Always use:
-  git(url: 'YOUR_REPO_URL', branch: 'YOUR_BRANCH', credentialsId: 'YOUR_GIT_CREDENTIALS_ID')
 - Never generate YOUR_ORG_NAME, YOUR_GITHUB_ORG, or YOUR_GITHUB_USERNAME as separate placeholders.
   The full repository URL (YOUR_REPO_URL) already contains the org/username. One placeholder for the full URL.
 """
+
+_CHECKOUT_SCM_RE = re.compile(r'\bcheckout\s+scm\b')
+_CHECKOUT_SCM_REPLACEMENT = "git(url: 'YOUR_REPO_URL', branch: 'YOUR_BRANCH', credentialsId: 'YOUR_GIT_CREDENTIALS_ID')"
 
 
 def generate_jenkinsfile(nl_request: str) -> tuple[str, str]:
@@ -69,6 +76,11 @@ def generate_jenkinsfile(nl_request: str) -> tuple[str, str]:
         )
         raw = provider.complete(correction_prompt, system=_SYSTEM_PROMPT)
         jenkinsfile = _extract_groovy(raw)
+
+    # Hard scrub: replace any remaining checkout scm regardless of LLM compliance
+    if _CHECKOUT_SCM_RE.search(jenkinsfile):
+        logger.warning("LLM generated checkout scm despite instructions — scrubbing")
+        jenkinsfile = _CHECKOUT_SCM_RE.sub(_CHECKOUT_SCM_REPLACEMENT, jenkinsfile)
 
     return template_name, jenkinsfile
 
