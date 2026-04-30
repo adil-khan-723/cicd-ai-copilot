@@ -65,22 +65,38 @@ class TestConfigureTool:
         assert result.fix_type == "configure_tool"
 
 
+def _make_session_mock(crumb_json=None, post_status=200, post_side_effect=None):
+    """Build a mock requests.Session that returns canned crumb + post responses."""
+    if crumb_json is None:
+        crumb_json = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
+
+    crumb_response = MagicMock()
+    crumb_response.raise_for_status.return_value = None
+    crumb_response.json.return_value = crumb_json
+
+    post_response = MagicMock()
+    post_response.status_code = post_status
+    post_response.text = ""
+
+    session = MagicMock()
+    session.get.return_value = crumb_response
+    if post_side_effect:
+        session.post.side_effect = post_side_effect
+    else:
+        session.post.return_value = post_response
+
+    return session
+
+
 class TestConfigureCredential:
     def test_creates_credential_in_jenkins(self):
-        """Creates a username/password credential placeholder in Jenkins."""
+        """Creates a credential placeholder in Jenkins."""
         server = MagicMock()
-
-        crumb_response = MagicMock()
-        crumb_response.raise_for_status.return_value = None
-        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
-
-        create_response = MagicMock()
-        create_response.status_code = 200
+        session = _make_session_mock()
 
         with (
             patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
-            patch("requests.get", return_value=crumb_response),
-            patch("requests.post", return_value=create_response),
+            patch("requests.Session", return_value=session),
         ):
             result = configure_credential(
                 job_name="node-deploy",
@@ -94,9 +110,12 @@ class TestConfigureCredential:
 
     def test_returns_failure_on_jenkins_exception(self):
         server = MagicMock()
-        server.create_credential.side_effect = jenkins_lib.JenkinsException("403 Forbidden")
+        session = _make_session_mock(post_status=500)
 
-        with patch("agent.pipeline_fixes._get_jenkins_server", return_value=server):
+        with (
+            patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
+            patch("requests.Session", return_value=session),
+        ):
             result = configure_credential("node-deploy", "3", "ECR_CREDENTIALS")
 
         assert result.success is False
@@ -104,21 +123,20 @@ class TestConfigureCredential:
 
     def test_injects_secret_text_value(self):
         server = MagicMock()
-        crumb_response = MagicMock()
-        crumb_response.raise_for_status.return_value = None
-        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
-        create_response = MagicMock()
-        create_response.status_code = 200
         posted_xml = {}
 
-        def capture_post(url, data, **kwargs):
-            posted_xml["body"] = data.decode("utf-8")
-            return create_response
+        def capture_post(url, data=None, **kwargs):
+            posted_xml["body"] = data.decode("utf-8") if isinstance(data, bytes) else data
+            r = MagicMock()
+            r.status_code = 200
+            r.text = ""
+            return r
+
+        session = _make_session_mock(post_side_effect=capture_post)
 
         with (
             patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
-            patch("requests.get", return_value=crumb_response),
-            patch("requests.post", side_effect=capture_post),
+            patch("requests.Session", return_value=session),
         ):
             result = configure_credential(
                 job_name="node-deploy",
@@ -133,21 +151,20 @@ class TestConfigureCredential:
 
     def test_injects_username_password_values(self):
         server = MagicMock()
-        crumb_response = MagicMock()
-        crumb_response.raise_for_status.return_value = None
-        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
-        create_response = MagicMock()
-        create_response.status_code = 200
         posted_xml = {}
 
-        def capture_post(url, data, **kwargs):
-            posted_xml["body"] = data.decode("utf-8")
-            return create_response
+        def capture_post(url, data=None, **kwargs):
+            posted_xml["body"] = data.decode("utf-8") if isinstance(data, bytes) else data
+            r = MagicMock()
+            r.status_code = 200
+            r.text = ""
+            return r
+
+        session = _make_session_mock(post_side_effect=capture_post)
 
         with (
             patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
-            patch("requests.get", return_value=crumb_response),
-            patch("requests.post", side_effect=capture_post),
+            patch("requests.Session", return_value=session),
         ):
             result = configure_credential(
                 job_name="node-deploy",
@@ -164,21 +181,20 @@ class TestConfigureCredential:
 
     def test_injects_ssh_key_values(self):
         server = MagicMock()
-        crumb_response = MagicMock()
-        crumb_response.raise_for_status.return_value = None
-        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
-        create_response = MagicMock()
-        create_response.status_code = 200
         posted_xml = {}
 
-        def capture_post(url, data, **kwargs):
-            posted_xml["body"] = data.decode("utf-8")
-            return create_response
+        def capture_post(url, data=None, **kwargs):
+            posted_xml["body"] = data.decode("utf-8") if isinstance(data, bytes) else data
+            r = MagicMock()
+            r.status_code = 200
+            r.text = ""
+            return r
+
+        session = _make_session_mock(post_side_effect=capture_post)
 
         with (
             patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
-            patch("requests.get", return_value=crumb_response),
-            patch("requests.post", side_effect=capture_post),
+            patch("requests.Session", return_value=session),
         ):
             result = configure_credential(
                 job_name="node-deploy",
@@ -195,16 +211,11 @@ class TestConfigureCredential:
 
     def test_skip_retrigger_does_not_call_build_job(self):
         server = MagicMock()
-        crumb_response = MagicMock()
-        crumb_response.raise_for_status.return_value = None
-        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
-        create_response = MagicMock()
-        create_response.status_code = 200
+        session = _make_session_mock()
 
         with (
             patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
-            patch("requests.get", return_value=crumb_response),
-            patch("requests.post", return_value=create_response),
+            patch("requests.Session", return_value=session),
         ):
             result = configure_credential(
                 job_name="node-deploy",

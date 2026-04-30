@@ -171,7 +171,13 @@ def test_notification_failure_fetches_jenkinsfile():
     def fake_process(payload, source):
         captured['payload'] = payload
 
+    mock_settings = MagicMock()
+    mock_settings.jenkins_url = "http://jenkins:8080"
+    mock_settings.jenkins_user = "admin"
+    mock_settings.jenkins_token = "test-token"
+
     with patch('jenkins.Jenkins', return_value=mock_server), \
+         patch('webhook.server.get_settings', return_value=mock_settings), \
          patch('webhook.server._process_failure_sync', side_effect=fake_process):
         _process_notification_failure_sync("my-job", "42", {})
 

@@ -366,9 +366,11 @@ class TestPipelineFixesScrubbing:
 
     def test_configure_credential_error_scrubbed(self):
         from agent.pipeline_fixes import configure_credential
+        mock_session = MagicMock()
+        mock_session.get.side_effect = Exception("Authorization: Basic YWRtaW46cGFzc3dvcmQ=")
         with patch("agent.pipeline_fixes._get_jenkins_server"), \
              patch("agent.pipeline_fixes.audit_secret_used"), \
-             patch("requests.get", side_effect=Exception("Authorization: Basic YWRtaW46cGFzc3dvcmQ=")):
+             patch("requests.Session", return_value=mock_session):
             result = configure_credential("my-job", "1", credential_id="MY_CRED")
         assert result.success is False
         assert "YWRtaW46cGFzc3dvcmQ=" not in result.detail
