@@ -99,7 +99,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
   const canAutoFix = analysis && !DIAGNOSTIC_TYPES.has(analysis.fix_type) &&
                      analysis.confidence >= CONFIDENCE_THRESHOLD && !fixResult && isLatestFailing
 
-  async function applyFix(credFields?: CredentialFields | null) {
+  async function applyFix(credFields?: CredentialFields | null, resolvedCorrectStep?: string) {
     if (!analysis) return
     setModalOpen(false)
     setFixing(true)
@@ -135,8 +135,9 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
       }
 
       if (analysis.fix_type === 'fix_step_typo' || analysis.fix_type === 'increase_timeout') {
-        if (analysis.bad_step)     body.bad_step     = analysis.bad_step
-        if (analysis.correct_step) body.correct_step = analysis.correct_step
+        if (analysis.bad_step) body.bad_step = analysis.bad_step
+        // Use resolved (placeholder-substituted) version if provided, else LLM original
+        body.correct_step = resolvedCorrectStep ?? analysis.correct_step
       }
 
       if (analysis.fix_type === 'pull_image') {

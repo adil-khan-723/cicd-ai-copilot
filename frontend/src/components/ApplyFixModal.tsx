@@ -91,8 +91,24 @@ interface Props {
   analysis: AnalysisCompleteEvent
   jobName: string
   buildNumber: string | number
-  onAccept: (credFields?: CredentialFields | null) => void
+  onAccept: (credFields?: CredentialFields | null, resolvedCorrectStep?: string) => void
   onCancel: () => void
+}
+
+const _PLACEHOLDER_RE = /<([a-z][a-z0-9 _-]+)>/gi
+
+function extractPlaceholders(text: string): string[] {
+  const matches: string[] = []
+  let m: RegExpExecArray | null
+  _PLACEHOLDER_RE.lastIndex = 0
+  while ((m = _PLACEHOLDER_RE.exec(text)) !== null) {
+    if (!matches.includes(m[1])) matches.push(m[1])
+  }
+  return matches
+}
+
+function resolvePlaceholders(text: string, values: Record<string, string>): string {
+  return text.replace(_PLACEHOLDER_RE, (_, key) => values[key] ?? `<${key}>`)
 }
 
 export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, onCancel }: Props) {
@@ -109,6 +125,12 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
   const [sshUsername, setSshUsername] = useState('')
   const [privateKey,  setPrivateKey]  = useState('')
 
+  // Inline placeholder substitution for fix_step_typo correct_step containing <placeholder> tokens
+  const correctStep = analysis.correct_step ?? ''
+  const stepPlaceholders = extractPlaceholders(correctStep)
+  const hasStepPlaceholders = stepPlaceholders.length > 0
+  const [placeholderValues, setPlaceholderValues] = useState<Record<string, string>>({})
+
   // reset fields when modal opens
   useEffect(() => {
     if (open) {
@@ -118,6 +140,7 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
       setPassword('')
       setSshUsername('')
       setPrivateKey('')
+      setPlaceholderValues({})
     }
   }, [open, typeFromLLM])
 
@@ -126,6 +149,10 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
     (credType === 'secret_text'       && secretValue.trim() !== '') ||
     (credType === 'username_password' && username.trim() !== '' && password.trim() !== '') ||
     (credType === 'ssh_key'           && sshUsername.trim() !== '' && privateKey.trim() !== '')
+
+  const stepPlaceholdersFilled =
+    !hasStepPlaceholders ||
+    stepPlaceholders.every(p => (placeholderValues[p] ?? '').trim() !== '')
 
   // close on Escape
   useEffect(() => {
@@ -265,6 +292,32 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                     ))}
                   </ol>
                 </div>
+
+                {/* Step placeholder substitution section */}
+                {hasStepPlaceholders && (
+                  <div className="rounded-xl border border-[rgba(46,109,160,0.18)] bg-[#f5f9ff] px-4 py-3.5 space-y-3">
+                    <p className="text-[10px] font-mono font-semibold text-[#2e6da0] uppercase tracking-[0.12em]">
+                      Required Values
+                    </p>
+                    <p className="text-[11px] text-text-dim">
+                      These values will be substituted into the Jenkinsfile patch before applying.
+                    </p>
+                    {stepPlaceholders.map(placeholder => (
+                      <div key={placeholder} className="space-y-1">
+                        <label className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.08em]">
+                          {placeholder.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                        </label>
+                        <input
+                          type={placeholder.includes('url') || placeholder.includes('repo') ? 'url' : 'text'}
+                          placeholder={getStepPlaceholderHint(placeholder)}
+                          value={placeholderValues[placeholder] ?? ''}
+                          onChange={e => setPlaceholderValues(v => ({ ...v, [placeholder]: e.target.value }))}
+                          className="w-full h-9 rounded-lg border border-[rgba(46,109,160,0.2)] bg-white px-3 text-[13px] font-mono text-text-primary placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-[#2e6da0]/30 focus:border-[#2e6da0]/50 transition"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Credential value section */}
                 {isCredential && (
@@ -418,8 +471,11 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                 )}
 
                 <button
-                  disabled={!credFieldsFilled}
+                  disabled={!credFieldsFilled || !stepPlaceholdersFilled}
                   onClick={() => {
+                    const resolved = hasStepPlaceholders
+                      ? resolvePlaceholders(correctStep, placeholderValues)
+                      : undefined
                     if (isCredential) {
                       onAccept({
                         credential_type: credType,
@@ -428,12 +484,15 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                         password:        credType === 'username_password' ? password     : undefined,
                         ssh_username:    credType === 'ssh_key'           ? sshUsername  : undefined,
                         private_key:     credType === 'ssh_key'           ? privateKey   : undefined,
-                      })
+                      }, resolved)
                     } else {
-                      onAccept()
+                      onAccept(undefined, resolved)
                     }
                   }}
-                  title={!credFieldsFilled ? 'Fill in credential fields first' : undefined}
+                  title={
+                    !credFieldsFilled ? 'Fill in credential fields first' :
+                    !stepPlaceholdersFilled ? 'Fill in all required fields first' : undefined
+                  }
                   className={cn(
                     'h-9 px-6 rounded-xl text-[13px] font-bold font-sans',
                     'flex items-center gap-2',
@@ -481,4 +540,17 @@ function getAcceptBtnClass(fixType: string) {
     increase_timeout:     'bg-warning hover:bg-[#9a6c22]',
   }
   return map[fixType] ?? 'bg-accent hover:bg-accent-hi'
+}
+
+function getStepPlaceholderHint(placeholder: string): string {
+  const hints: Record<string, string> = {
+    'your-repo-url':    'https://github.com/org/repo.git',
+    'repository-url':   'https://github.com/org/repo.git',
+    'repo-url':         'https://github.com/org/repo.git',
+    'branch-name':      'main',
+    'your-branch':      'main',
+    'branch':           'main',
+    'your-server-url':  'https://sonar.example.com',
+  }
+  return hints[placeholder] ?? `your-${placeholder}`
 }
