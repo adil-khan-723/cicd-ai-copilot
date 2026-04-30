@@ -551,6 +551,8 @@ class CommitPayload(BaseModel):
 @router.post("/api/commit")
 async def commit_pipeline(payload: CommitPayload):
     from copilot.jenkins_configurator import create_job
+    from copilot.credential_extractor import extract_credential_ids
+    from copilot.credential_checker import get_missing_credentials
 
     job_name = payload.job_name.strip() if payload.job_name and payload.job_name.strip() else _slugify(payload.description)
 
@@ -559,12 +561,22 @@ async def commit_pipeline(payload: CommitPayload):
             job_url = await asyncio.get_event_loop().run_in_executor(
                 None, create_job, job_name, payload.content, payload.description
             )
-            return {"success": True, "job_name": job_name, "job_url": job_url, "detail": "Job created"}
+            cred_ids = extract_credential_ids(payload.content)
+            missing = await asyncio.get_event_loop().run_in_executor(
+                None, get_missing_credentials, cred_ids
+            )
+            return {
+                "success": True,
+                "job_name": job_name,
+                "job_url": job_url,
+                "detail": "Job created",
+                "missing_credentials": missing,
+            }
         except Exception as exc:
             logger.error("commit_pipeline error: %s", exc)
-            return {"success": False, "job_name": job_name, "job_url": None, "detail": str(exc)}
+            return {"success": False, "job_name": job_name, "job_url": None, "detail": str(exc), "missing_credentials": []}
 
-    return {"success": True, "job_name": job_name, "job_url": None, "detail": "Saved (not applied to Jenkins)"}
+    return {"success": True, "job_name": job_name, "job_url": None, "detail": "Saved (not applied to Jenkins)", "missing_credentials": []}
 
 
 @router.get("/api/audit")

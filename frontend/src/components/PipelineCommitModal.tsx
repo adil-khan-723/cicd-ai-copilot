@@ -28,7 +28,7 @@ interface Props {
   pipeline: string
   platform: 'jenkins' | 'github'
   description: string
-  onCommitted: () => void
+  onCommitted: (missingCredentials: string[]) => void
   onCancel: () => void
 }
 
@@ -95,7 +95,7 @@ export function PipelineCommitModal({ open, pipeline, platform, description, onC
       })
       const data = await res.json()
       if (data.success) {
-        onCommitted()
+        onCommitted(data.missing_credentials ?? [])
       } else {
         setError(data.detail ?? 'Commit failed')
       }

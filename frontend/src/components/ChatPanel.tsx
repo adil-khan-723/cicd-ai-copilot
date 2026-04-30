@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import type { ChatMessage as Message } from '@/types'
 import type { useChatStore } from '@/hooks/useChatStore'
 import { PipelineCommitModal } from '@/components/PipelineCommitModal'
+import { MissingCredentialModal } from '@/components/MissingCredentialModal'
 
 type ChatStore = ReturnType<typeof useChatStore>
 type HistoryEntry = { role: 'user' | 'assistant'; content: string }
@@ -280,6 +281,8 @@ export function ChatPanel({ chatStore, streaming, setStreaming }: ChatPanelProps
   const [input,            setInput]            = useState('')
   const [commitTarget,     setCommitTarget]     = useState<Message | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [pendingCreds,     setPendingCreds]     = useState<{ ids: string[]; jobName: string } | null>(null)
+  const [credIdx,          setCredIdx]          = useState(0)
   // Once user interacts with suggestions (clicks one or starts typing), hide them
   const [suggestionsGone,  setSuggestionsGone]  = useState(false)
   const bottomRef   = useRef<HTMLDivElement>(null)
@@ -347,10 +350,49 @@ export function ChatPanel({ chatStore, streaming, setStreaming }: ChatPanelProps
     }
   }
 
-  function handleCommitted() {
+  function handleCommitted(missingCredentials: string[]) {
     if (!commitTarget || !activeChatId) return
+    const jobName = commitTarget.content.slice(0, 80)
     setMessages(activeChatId, m => m.map(x => x.id === commitTarget.id ? { ...x, committed: true } : x))
     setCommitTarget(null)
+    if (missingCredentials.length > 0) {
+      setPendingCreds({ ids: missingCredentials, jobName })
+      setCredIdx(0)
+    }
+  }
+
+  async function handleCredDone(credentialId: string, credFields: import('@/types').CredentialFields | null) {
+    if (credFields) {
+      try {
+        await fetch('/api/fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fix_type:        'configure_credential',
+            job_name:        pendingCreds?.jobName ?? '',
+            build_number:    '0',
+            credential_id:   credentialId,
+            credential_type: credFields.credential_type,
+            secret_value:    credFields.secret_value,
+            username:        credFields.username,
+            password:        credFields.password,
+            ssh_username:    credFields.ssh_username,
+            private_key:     credFields.private_key,
+            skip_retrigger:  'true',
+          }),
+        })
+      } catch {
+        // fail-silent: credential creation best-effort
+      }
+    }
+    if (!pendingCreds) return
+    const nextIdx = credIdx + 1
+    if (nextIdx >= pendingCreds.ids.length) {
+      setPendingCreds(null)
+      setCredIdx(0)
+    } else {
+      setCredIdx(nextIdx)
+    }
   }
 
   return (
@@ -475,6 +517,18 @@ export function ChatPanel({ chatStore, streaming, setStreaming }: ChatPanelProps
               onCommitted={handleCommitted}
               onCancel={() => setCommitTarget(null)}
             />
+
+            {pendingCreds && (
+              <MissingCredentialModal
+                open={true}
+                credentialId={pendingCreds.ids[credIdx]}
+                jobName={pendingCreds.jobName}
+                index={credIdx}
+                total={pendingCreds.ids.length}
+                onDone={handleCredDone}
+                onSkipAll={() => { setPendingCreds(null); setCredIdx(0) }}
+              />
+            )}
 
             {/* Input */}
             <div className="shrink-0 border-t border-accent-border/30 p-3">

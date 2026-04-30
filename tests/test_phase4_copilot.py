@@ -164,3 +164,90 @@ class TestJenkinsConfigurator:
             mock_settings.return_value.jenkins_token = ""
             with pytest.raises(RuntimeError, match="not configured"):
                 create_job("test", "pipeline {}")
+
+
+# ---------------------------------------------------------------------------
+# Credential extractor tests
+# ---------------------------------------------------------------------------
+
+from copilot.credential_extractor import extract_credential_ids
+
+
+class TestCredentialExtractor:
+    def test_extracts_single_string_cred(self):
+        jf = "withCredentials([string(credentialsId: 'MY_TOKEN', variable: 'T')]) {}"
+        assert extract_credential_ids(jf) == ['MY_TOKEN']
+
+    def test_extracts_multiple_types(self):
+        jf = """
+        withCredentials([
+            string(credentialsId: 'API_KEY', variable: 'K'),
+            usernamePassword(credentialsId: 'DOCKER_HUB', usernameVariable: 'U', passwordVariable: 'P'),
+            sshUserPrivateKey(credentialsId: 'SSH_KEY', keyFileVariable: 'F'),
+        ]) {}
+        """
+        assert extract_credential_ids(jf) == ['API_KEY', 'DOCKER_HUB', 'SSH_KEY']
+
+    def test_deduplicates(self):
+        jf = """
+        withCredentials([string(credentialsId: 'TOKEN', variable: 'T')]) {}
+        withCredentials([string(credentialsId: 'TOKEN', variable: 'T2')]) {}
+        """
+        assert extract_credential_ids(jf) == ['TOKEN']
+
+    def test_empty_on_no_creds(self):
+        jf = "pipeline { agent any stages { stage('Build') { steps { sh 'make' } } } }"
+        assert extract_credential_ids(jf) == []
+
+    def test_double_quoted_ids(self):
+        jf = 'withCredentials([string(credentialsId: "MY_SECRET", variable: "S")]) {}'
+        assert extract_credential_ids(jf) == ['MY_SECRET']
+
+    def test_skips_dynamic_references(self):
+        jf = "withCredentials([string(credentialsId: env.DYNAMIC_CRED, variable: 'X')]) {}"
+        assert extract_credential_ids(jf) == []
+
+
+# ---------------------------------------------------------------------------
+# Credential checker tests
+# ---------------------------------------------------------------------------
+
+from copilot.credential_checker import get_missing_credentials
+
+
+class TestCredentialChecker:
+    def test_returns_missing_only(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "credentials": [{"id": "EXISTS"}, {"id": "ALSO_EXISTS"}]
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("copilot.credential_checker.requests.get", return_value=mock_resp):
+            with patch("copilot.credential_checker.get_settings") as mock_s:
+                mock_s.return_value.jenkins_url = "http://jenkins:8080"
+                mock_s.return_value.jenkins_user = "admin"
+                mock_s.return_value.jenkins_token = "token"
+                result = get_missing_credentials(["EXISTS", "MISSING_ONE", "ALSO_EXISTS"])
+
+        assert result == ["MISSING_ONE"]
+
+    def test_empty_input_returns_empty(self):
+        assert get_missing_credentials([]) == []
+
+    def test_fails_open_on_api_error(self):
+        with patch("copilot.credential_checker.requests.get", side_effect=Exception("timeout")):
+            with patch("copilot.credential_checker.get_settings") as mock_s:
+                mock_s.return_value.jenkins_url = "http://jenkins:8080"
+                mock_s.return_value.jenkins_user = "admin"
+                mock_s.return_value.jenkins_token = "token"
+                result = get_missing_credentials(["SOME_CRED"])
+
+        assert result == []
+
+    def test_no_jenkins_config_returns_empty(self):
+        with patch("copilot.credential_checker.get_settings") as mock_s:
+            mock_s.return_value.jenkins_url = ""
+            mock_s.return_value.jenkins_token = ""
+            result = get_missing_credentials(["SOME_CRED"])
+        assert result == []
