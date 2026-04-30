@@ -383,8 +383,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
                         )}
                         <button
                           onClick={async () => {
-                            setPendingCredRetrigger(null)
-                            await fetch('/api/fix', {
+                            const res = await fetch('/api/fix', {
                               method:  'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body:    JSON.stringify({
@@ -393,6 +392,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
                                 build_number: String(card.build),
                               }),
                             })
+                            if (res.ok) setPendingCredRetrigger(null)
                           }}
                           className="h-7 px-3 rounded-lg text-[11px] font-semibold bg-[#2e6da0] text-white hover:bg-[#265d8c] transition-colors cursor-pointer"
                         >
