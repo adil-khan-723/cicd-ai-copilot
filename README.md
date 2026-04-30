@@ -1,1081 +1,462 @@
-# DevOps AI Agent — CI/CD Copilot & Auto-Remediation System
+# DevOps AI Agent
 
-> An AI-powered DevOps agent that monitors CI/CD pipelines, analyzes failures using local or cloud LLMs, suggests fixes, executes remediations with human-in-the-loop approval via the web UI, and acts as a copilot for generating pipelines and managing secrets — purely focused on CI/CD (Jenkins and GitHub Actions).
+**CI/CD failure analysis and auto-remediation — Jenkins-native, human-in-the-loop, runs fully local.**
+
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+[![Anthropic](https://img.shields.io/badge/Claude-Haiku%20%2F%20Sonnet-D4A27F?style=flat-square&logo=anthropic&logoColor=white)](https://anthropic.com)
+[![Ollama](https://img.shields.io/badge/Ollama-local%20LLM-black?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docker.com)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+---
+
+Jenkins pipeline failures are annoying in a specific way — the error is rarely in the obvious place. You end up checking tool configs, credential stores, plugin states, and cache states before you figure out that it was a typo in the tool name all along.
+
+This agent handles that loop. It receives the failure webhook, isolates the failed stage (passing stages are discarded immediately), runs a deterministic crawler against the live Jenkins API to verify tool names, plugins, and credential IDs, then hands roughly 1000 tokens of pre-verified facts to an LLM. Diagnosis and fix buttons appear in the web UI in under 10 seconds.
+
+**90% fewer tokens** than feeding the raw log. **~$0.01/month** in production. Fully local with Ollama if you don't want a cloud API key.
 
 ---
 
 ## Table of Contents
 
-- [Project Overview](#project-overview)
-- [Core Philosophy](#core-philosophy)
-- [Scope — What This Project Is and Is Not](#scope)
-- [Two Modes of Operation](#two-modes-of-operation)
-- [Complete System Flow](#complete-system-flow)
-- [Architecture Decisions & Optimizations](#architecture-decisions--optimizations)
-- [The Tool Verification Crawler — Deep Dive](#the-tool-verification-crawler--deep-dive)
-- [Full Tech Stack](#full-tech-stack)
-- [Project Structure](#project-structure)
-- [Component Breakdown](#component-breakdown)
-- [LLM Provider System](#llm-provider-system)
-- [Model Routing Strategy](#model-routing-strategy)
-- [Local Model Recommendations](#local-model-recommendations)
-- [Cost Analysis](#cost-analysis)
-- [Fix Capabilities](#fix-capabilities)
-- [Copilot Capabilities](#copilot-capabilities)
-- [Web UI Interface](#web-ui-interface)
-- [Security Design](#security-design)
+- [Two Modes](#two-modes)
+- [Key Engineering Decisions](#key-engineering-decisions)
+- [What It Can and Cannot Fix](#what-it-can-and-cannot-fix)
+- [Credential and Secrets Handling](#credential-and-secrets-handling)
+- [Quick Start](#quick-start)
 - [Configuration Reference](#configuration-reference)
-- [Build Phases & Timeline](#build-phases--timeline)
-- [Resume Value](#resume-value)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Cost](#cost)
+- [Developer](#developer)
 
 ---
 
-## Project Overview
+## Two Modes
 
-This project is a production-grade AI DevOps agent built by Adil Khan as a portfolio and real-world tool.
+### Reactive — Failure Analyzer
 
-**What it solves:**
-Every DevOps team deals with CI/CD pipeline failures, misconfigured tools, wrong tool references in pipeline files, missing credentials, and repetitive infrastructure setup. This agent automates failure analysis, suggests precise fixes, executes remediations safely with human approval, and helps generate pipelines through natural language — all through the web UI.
-
-**What makes it different from tutorials:**
-- Not a toy — solves real problems production teams face daily
-- Human-in-the-loop design — AI never acts without approval
-- Selective context feeding — optimized for minimal LLM token usage
-- Deterministic tool verification — LLM receives facts, not guesses
-- Fully configurable LLM backend — swap models via config, zero code changes
-- Caching layer — repeated failures cost zero tokens
-- Self-hosted LLM support — runs completely free with Ollama
-
----
-
-## Core Philosophy
-
-### 1. Selective Context Feeding
-Do NOT feed the entire pipeline log to the LLM. A pipeline with 8 stages where stages 1-4 pass and stage 5 fails should only send the failed stage logs plus that stage's syntax to the LLM. Passing stage logs are noise — they inflate token costs and reduce analysis accuracy. This alone achieves a 90% token reduction.
-
-### 2. Deterministic Before LLM
-Tool verification — is Maven configured? does the tool name in the Jenkinsfile match what Jenkins has? is the plugin installed? are credentials present? — is handled by a deterministic crawler agent, NOT the LLM. The LLM receives verified facts. This prevents hallucination on tool configuration questions entirely.
-
-### 3. Human-in-the-Loop
-The agent NEVER executes fixes automatically. Every fix requires explicit manual approval via web UI buttons. This is intentional — AI should not have unchecked access to production infrastructure. This pattern is called Human-in-the-Loop and it is how production AI systems are built responsibly.
-
-### 4. Provider Agnostic
-No model is hardcoded anywhere. Every LLM call goes through a provider abstraction layer. Switching from Claude to Ollama requires only a .env change — zero code changes. This makes the project work completely free on local models.
-
-### 5. Confidence Thresholds
-Fix execution only proceeds if the LLM returns a confidence level above a configured threshold. Low confidence responses show the analysis but do not offer an execute button — only a manual review option.
-
-### 6. Parallel Processing
-Tool verification and log cleaning run in parallel — not sequentially. This reduces total response time significantly.
-
----
-
-## Scope
-
-### What this project IS:
-- A CI/CD failure analyzer and auto-remediation agent
-- Focused purely on Jenkins pipelines and GitHub Actions workflows
-- A tool configuration verifier for Jenkins Global Tool Configuration and GitHub Actions setup
-- A copilot for generating Jenkinsfiles and GitHub Actions YAML
-- A secrets and credentials manager for Jenkins and GitHub
-
-### What this project is NOT:
-- A Kubernetes monitoring or management tool — K8s is a separate project
-- A cluster health monitor
-- An application performance monitor
-- Anything outside the CI/CD pipeline scope
-
-Any pipeline-triggered deployment steps (like rolling back a K8s deployment that a pipeline kicked off) are in scope. Cluster monitoring, Alertmanager events, and pod health are out of scope and belong to a separate dedicated project.
-
----
-
-## Two Modes of Operation
-
-### Mode 1 — Reactive (Failure Analyzer)
-Triggered automatically when a pipeline fails.
+Triggered automatically when Jenkins sends a failure webhook.
 
 ```
 Pipeline fails
-→ Logs captured
-→ Failed stage identified and isolated
-→ Tool verification crawler runs in parallel with log cleaning
-→ LLM analyzes merged context
-→ web UI notification with fix suggestion
-→ Manual approval
-→ Fix executed
-→ Result reported back to web UI
+→ Webhook received by FastAPI server
+→ Failed stage isolated — passing stage logs discarded immediately
+→ Tool verification crawler queries Jenkins API in parallel with log cleaning
+→ LLM receives ~1000 tokens of verified facts (not raw logs)
+→ Web UI shows diagnosis + confidence level + fix buttons
+→ Human clicks Approve / Retry / Dismiss
+→ Fix executes against Jenkins API, result reported back
+→ Pipeline re-triggered
 ```
 
-### Mode 2 — Proactive (Copilot)
-Triggered by user commands in the web UI.
+### Proactive — Copilot
+
+Triggered by chat commands in the web UI.
 
 ```
-User types natural language request
-→ Agent generates Jenkinsfile or GitHub Actions YAML
-→ Preview shown in web UI
-→ User approves or requests changes
-→ Committed to GitHub repo or applied to Jenkins via API
-```
-
----
-
-## Complete System Flow
-
-### Reactive Flow — Failure Analysis
-
-```
-Pipeline with 8 stages:
-Stages 1-4: PASS ✅  →  Ignored entirely, logs discarded
-Stage 5:    FAIL ❌
-            ↓
-┌─────────────────────────────────────────┐
-│           Pipeline Parser               │
-│  - Identifies which stage failed        │
-│  - Extracts ONLY failed stage logs      │
-│  - Extracts failed stage syntax         │
-│  - Notes tool references in that stage  │
-└──────────────┬──────────────────────────┘
-               ↓
-   ┌───────────────────────────┐
-   │   Two parallel processes  │
-   └───────────────────────────┘
-        ↙                 ↘
-┌─────────────┐    ┌──────────────────────────┐
-│ Log Cleaner │    │  Tool Verifier Crawler   │
-│             │    │                          │
-│ Strip ANSI  │    │  For Jenkins:            │
-│ Strip times │    │  - Parse Jenkinsfile     │
-│ Keep ERROR  │    │    tools{} block         │
-│ Keep WARN   │    │  - Query Jenkins API     │
-│ Keep 10     │    │    for configured tools  │
-│ lines before│    │  - Cross-check names     │
-│ first ERROR │    │    exact match check     │
-│             │    │  - Fuzzy match on miss   │
-│             │    │  - Check plugin active   │
-│             │    │  - Check binary path     │
-│             │    │  - Check credentials     │
-│             │    │                          │
-│             │    │  For GitHub Actions:     │
-│             │    │  - Parse workflow YAML   │
-│             │    │  - Check secrets exist   │
-│             │    │  - Check runner labels   │
-│             │    │  - Check env variables   │
-│             │    │  - Check action versions │
-│             │    │                          │
-│             │    │  Returns verified facts  │
-│             │    │  NO LLM involved here    │
-└──────┬──────┘    └────────────┬─────────────┘
-       └──────────┬─────────────┘
-                  ↓
-┌─────────────────────────────────────────┐
-│           Context Builder               │
-│                                         │
-│  Merges into single optimized payload:  │
-│  - Cleaned failed stage logs (~300 tok) │
-│  - Failing stage Groovy source (~150)   │
-│  - Tool verification report (~200 tok)  │
-│                                         │
-│  Total: ~1000 tokens (not 10,000+)      │
-└──────────────────┬──────────────────────┘
-                   ↓
-┌─────────────────────────────────────────┐
-│             LLM Analyzer                │
-│                                         │
-│  Model: Claude Haiku or Llama 3.1 8B    │
-│  (configurable via .env)                │
-│                                         │
-│  Returns:                               │
-│  - What failed (specific)               │
-│  - Why it failed (root cause)           │
-│  - Suggested fix (actionable)           │
-│  - Confidence level: High / Med / Low   │
-└──────────────────┬──────────────────────┘
-                   ↓
-┌─────────────────────────────────────────┐
-│           Web UI Notifier               │
-│                                         │
-│  Formatted message with:                │
-│  - What failed                          │
-│  - Tool verification results            │
-│  - Root cause                           │
-│  - Suggested fix                        │
-│  - Confidence level                     │
-│                                         │
-│  If confidence HIGH:                    │
-│  [✅ Apply Fix] [🔁 Retry] [❌ Dismiss] │
-│                                         │
-│  If confidence LOW or MED:              │
-│  [📋 I'll Handle This Manually]         │
-└──────────────────┬──────────────────────┘
-                   ↓
-           User clicks button
-                   ↓
-┌─────────────────────────────────────────┐
-│          Approval Handler               │
-│                                         │
-│  If Approved:                           │
-│  → Decision logged to audit log         │
-│  → Fix Executor runs specific fix       │
-│  → Pipeline reruns                      │
-│  → Result reported back to web UI       │
-│                                         │
-│  If Rejected or Manual:                 │
-│  → Decision logged to audit log         │
-│  → Team notified to handle manually     │
-│                                         │
-│  Audit log always records:              │
-│  - Who approved or rejected             │
-│  - Timestamp                            │
-│  - What fix was proposed                │
-│  - What was executed                    │
-│  - Result of execution                  │
-└─────────────────────────────────────────┘
-```
-
-### Proactive Flow — Copilot
-
-```
-User in web UI:
-"generate jenkins python-docker-ecr"
-         ↓
-Copilot Handler receives command
-         ↓
-Pipeline Generator:
-  - Loads relevant base template
-  - Sends template + user request to LLM
-  - Model: Claude Sonnet or Qwen2.5-Coder 32B
-  - LLM fills template intelligently
-  - Returns complete Jenkinsfile or YAML
-         ↓
-Web UI preview with syntax highlighting
-         ↓
-[✅ Commit to Repo] [✏️ Modify] [❌ Cancel]
-         ↓
-If approved:
-→ Repo Committer pushes to GitHub
-→ OR Jenkins Configurator applies via API
-→ Confirmation shown in web UI with file path
+User types: "generate jenkins python-docker-ecr"
+→ Relevant base template loaded
+→ Template + request sent to generation model (Sonnet / Qwen2.5-Coder)
+→ Complete Jenkinsfile returned
+→ Preview shown in web UI with syntax highlighting
+→ User approves → committed to GitHub / applied to Jenkins via API
 ```
 
 ---
 
-## Architecture Decisions & Optimizations
+## Key Engineering Decisions
 
-### Token Optimization — 90% Reduction
-A full 8-stage pipeline can generate 10,000+ tokens of logs. By parsing the result first and extracting only the failed stage, the context sent to the LLM drops to approximately 1000 tokens. This is the single most impactful optimization in the project.
+### 1. Selective context feeding
 
-### Deterministic Verification First
-Tool configuration checks are intentionally done without the LLM. A crawler queries the Jenkins API or GitHub API and returns verified facts. The LLM then has accurate information instead of having to infer it from error messages — which leads to hallucination.
+Full pipeline logs are mostly noise. An 8-stage pipeline where stage 5 fails produces 10,000+ tokens — the vast majority from stages that passed. The parser finds the first failing stage and sends only that stage's cleaned logs (~300 tokens) and its Groovy source block (~150 tokens).
 
-### The Tool Name Mismatch Problem
-One of the most common and most frustrating CI/CD failures is a tool name mismatch. In Jenkins you configure a tool globally under Manage Jenkins → Global Tool Configuration. You give it a name like "Maven3". Then in your Jenkinsfile you write:
+Accuracy goes up alongside the cost drop. The model isn't reading thousands of lines of successful output to find what actually broke.
+
+### 2. Deterministic verification before the LLM
+
+Tool configuration checks aren't sent to the LLM as questions. Before any model call, a crawler queries the live Jenkins API and builds a verified facts report. The LLM gets something like "Maven referenced as 'Maven-3.8', configured in Jenkins as 'Maven3', 72% Levenshtein similarity" — not raw error output to interpret.
+
+The model can't hallucinate tool names when we already have the list of what's configured.
+
+### 3. Fix boundaries
+
+Tool name mismatches, missing credentials, inactive plugins, IAM issues — the agent diagnoses these and stops there. No execute button. It gives you the exact details and tells you what to change manually.
+
+Auto-fix covers stateless, reversible operations: retry, cache clear, image pull, timeout increase. Configuration and credentials stay with the human. This isn't a gap to fill later — it's the design.
+
+### 4. Provider abstraction
+
+No model name is hardcoded. Every LLM call goes through a provider factory that reads the task type from `.env`, picks the provider, and falls back to Ollama if the primary is unavailable. The calling code doesn't know what model is on the other end.
+
+Analysis routes to fast, cheap models (Claude Haiku, Llama 3.1 8B). Generation routes to code-quality models (Claude Sonnet, Qwen2.5-Coder 32B). Going from cloud to fully local is two lines in `.env`.
+
+### 5. Credential scrubbing
+
+Every error message, exception string, and log line passes through `scrub()` before it hits a log file or the UI. It matches Anthropic API keys, GitHub PATs, Jenkins tokens (32-char hex), AWS access key IDs, and HTTP Bearer/Basic auth headers, and replaces them with labeled redaction strings.
+
+Jenkins API exceptions are included — those calls frequently echo authentication headers back in error bodies.
+
+---
+
+## What It Can and Cannot Fix
+
+### Auto-fixable (with approval)
+
+| Fix | Trigger condition |
+|---|---|
+| Retry pipeline | Transient failure, network timeout |
+| Clear Docker build cache + retry | Layer cache corruption |
+| Pull fresh base image + retry | Stale or wrong image tag |
+| Clear npm cache + retry | Node dependency cache corruption |
+| Clear pip/Maven cache + retry | Python/Java dependency cache corruption |
+| Increase timeout + retry | Pipeline timeout exceeded |
+| Patch Jenkinsfile DSL step typo | LLM detects invalid step name, patches file in workspace |
+| Configure credential via Jenkins API | LLM identifies missing credential, user provides value in web UI |
+
+### Always diagnostic — never auto-executed
+
+These produce a diagnosis card with exact details and a "Handle manually" button only:
+
+| Issue | Why it's diagnostic-only |
+|---|---|
+| Tool name mismatch (Jenkinsfile vs Jenkins Global Tool Config) | Requires human decision: rename the tool in Jenkins, or update the Jenkinsfile |
+| Missing or inactive plugin | Requires Jenkins admin access and restart |
+| Missing credential ID (no value provided) | Agent can't create a credential with no value |
+| IAM / permission issues | Security boundary — never auto-modified |
+| Runner label mismatch | Infrastructure config, not a pipeline fix |
+
+---
+
+## Credential and Secrets Handling
+
+The agent interacts with three credential systems: Jenkins credentials store, the Anthropic API, and GitHub tokens. Here's how each is handled:
+
+### At runtime
+
+Secret values are accepted only through the web UI credential input — they are passed directly to the Jenkins credentials API in a single request and never stored, logged, or held in memory beyond that call. The audit log records the credential ID, who triggered it, and the timestamp — never the value.
+
+### In error paths
+
+Every error string returned from Jenkins API calls, LLM provider calls, and internal exceptions passes through `scrub()` before it reaches a log file or the UI. Patterns covered:
+
+| Pattern | Redaction label |
+|---|---|
+| `sk-ant-api03-...` | `[REDACTED:anthropic-key]` |
+| `ghp_...` | `[REDACTED:github-token]` |
+| `github_pat_...` | `[REDACTED:github-pat]` |
+| 32-char lowercase hex | `[REDACTED:jenkins-token]` |
+| `AKIA...` | `[REDACTED:aws-key]` |
+| `Bearer <token>` | `Bearer [REDACTED]` |
+| `Basic <base64>` | `Basic [REDACTED]` |
+
+### In generated pipeline files
+
+When the Copilot generates a Jenkinsfile or GitHub Actions YAML, only variable references appear in the output — never literal values:
 
 ```groovy
-tools {
-    maven 'Maven-3.8'
+environment {
+    AWS_CREDENTIALS = credentials('aws-prod-credentials')
 }
 ```
 
-The pipeline fails because "Maven-3.8" does not match "Maven3". The error message is often misleading and time-consuming to debug. The crawler catches this by parsing the Jenkinsfile tools{} block, querying the Jenkins API for all configured tool names, running exact match comparison, and if no match is found running a fuzzy similarity check to suggest the likely intended tool name. Same problem exists in GitHub Actions where secrets or runner labels are referenced but not configured.
+### Startup checks
 
-### Response Caching
-Identical failure signatures use cached LLM responses. Cache key is MD5 hash of cleaned logs + stage syntax + verification report. If the same Docker permission error appears 10 times in a month, the LLM is called once and the other 9 are served from cache at zero cost.
-
-### Log Cleaning Pipeline
-Before sending logs to the LLM:
-1. Strip ANSI color escape codes
-2. Strip timestamps
-3. Remove all INFO level lines
-4. Keep ERROR and WARN lines
-5. Keep 10 lines before the first ERROR for context
-6. Strip duplicate whitespace and blank lines
-
-### Fallback Chain
-```
-Configured provider unavailable?
-→ Try Ollama local
-→ Ollama also unavailable?
-→ Post to web UI: manual review required
-→ Never silently fail
-→ Always notify
-```
+On boot, the agent checks for missing `WEBHOOK_SECRET`, default/weak credentials, and other misconfigurations and logs security warnings before accepting traffic.
 
 ---
 
-## The Tool Verification Crawler — Deep Dive
+## Quick Start
 
-This is one of the most original and valuable components in the project. It runs deterministically before any LLM call and returns a verified facts report. No guessing, no inference — only what the APIs confirm.
+### Prerequisites
 
-### Jenkins Tool Verification
+- Docker + Docker Compose
+- Jenkins instance (local Docker or remote) with webhook plugin installed
+- API tokens for Jenkins and GitHub
 
-**What it checks:**
-
-Step 1 — Parse the Jenkinsfile or pipeline definition:
-- tools{} block references: maven, jdk, nodejs, git, docker, etc.
-- sh steps that invoke tools: mvn, npm, java, docker, gradle, etc.
-- withCredentials blocks: credential IDs referenced
-- environment blocks: variables referenced
-
-Step 2 — Query Jenkins REST API:
-- GET /api/json for installed plugins and their active status
-- GET /computer/api/json for agent/node tool installations
-- GET /credentials/store/system/api/json for configured credential IDs
-- Global Tool Configuration endpoint for configured tool names
-
-Step 3 — Cross-check and verify:
-- Does the tool name in the Jenkinsfile exactly match a configured tool name?
-- If not, run fuzzy match to find closest configured name and suggest it
-- Is the plugin that manages this tool installed and active?
-- Is the tool binary path valid on the agent?
-- Are all credential IDs referenced in the pipeline present in the credentials store?
-
-**Example verification report:**
-
-```
-Jenkins Tool Verification Report:
-─────────────────────────────────
-Maven:
-  Referenced in Jenkinsfile as:  'Maven-3.8'
-  Configured in Jenkins:          NOT FOUND ❌
-  Available configurations:       'maven-3.6', 'Maven3'
-  Best match suggestion:          'Maven3' (72% similarity)
-  Likely cause:                   Name mismatch
-
-JDK:
-  Referenced as:  'JDK-17'
-  Configured:     'JDK-17' ✅
-  Path valid:     ✅
-
-Docker:
-  Plugin:   'docker-plugin' installed and active ✅
-  Daemon:   Running ✅
-  Registry: 'docker-registry-credentials' ✅
-
-AWS Credentials:
-  Referenced ID:  'aws-prod-credentials'
-  In store:       ✅
-```
-
-### GitHub Actions Tool Verification
-
-**What it checks:**
-
-Step 1 — Parse the workflow YAML:
-- All uses: fields (action names and versions)
-- All ${{ secrets.NAME }} references
-- All env: variable references
-- All runs-on: runner label requests
-
-Step 2 — Query GitHub API:
-- GET /repos/owner/repo/actions/secrets for configured secrets
-- GET /repos/owner/repo/actions/runners for available runners and labels
-- Check action versions against known releases
-
-Step 3 — Cross-check:
-- Is every referenced secret configured in repo or org settings?
-- Does a runner with the requested label exist and is it online?
-- Is the action version valid?
-
-**Example verification report:**
-
-```
-GitHub Actions Verification Report:
-────────────────────────────────────
-Secrets:
-  AWS_ACCESS_KEY_ID:      Configured ✅
-  AWS_SECRET_ACCESS_KEY:  Configured ✅
-  DOCKER_PASSWORD:        NOT FOUND ❌
-
-Runner:
-  Requested: 'self-hosted, linux, x64'
-  Available: 'self-hosted, linux, x64' ✅ (2 runners online)
-
-Actions:
-  actions/checkout@v4:          Valid ✅
-  actions/setup-java@v3:        Valid ✅
-  aws-actions/amazon-ecr-login: No version pinned ⚠️
-```
-
----
-
-## Full Tech Stack
-
-| Layer | Technology |
-|---|---|
-| CI/CD Integration | Jenkins + GitHub Actions |
-| Local LLM | Ollama (Llama 3.1 8B, Qwen2.5-Coder 32B, Mistral 7B) |
-| Cloud LLM | Claude API (Haiku 3.5 + Sonnet 4.5) |
-| Language | Python 3.11+ |
-| Webhook Server | FastAPI |
-| Jenkins API | python-jenkins |
-| GitHub API | PyGithub |
-| Containerization | Docker + Docker Compose |
-| Caching | In-memory (Redis optional for production) |
-| Config Management | python-dotenv |
-| Log Processing | Python regex + custom parser |
-
----
-
-## Project Structure
-
-```
-devops-ai-agent/
-│
-├── providers/                           # LLM Provider abstraction layer
-│   ├── __init__.py
-│   ├── base.py                          # Abstract interface all providers implement
-│   ├── factory.py                       # Router + fallback logic
-│   ├── anthropic_provider.py            # Claude Haiku / Sonnet
-│   ├── ollama_provider.py               # Local Llama / Qwen / Mistral
-│
-├── parser/                              # Pipeline result parsing — NO LLM
-│   ├── __init__.py
-│   ├── pipeline_parser.py               # Identifies passed vs failed stages
-│   ├── log_extractor.py                 # Extracts ONLY failed stage logs
-│   └── log_cleaner.py                   # Strips noise, timestamps, ANSI codes
-│
-├── verification/                        # Deterministic tool verification — NO LLM
-│   ├── __init__.py
-│   ├── tool_verifier.py                 # Main orchestrator — runs checks in parallel
-│   ├── jenkins_crawler.py               # Parses Jenkinsfile + queries Jenkins API
-│   │                                    # Checks tools{} block vs Global Tool Config
-│   │                                    # Exact + fuzzy name matching
-│   │                                    # Plugin active status
-│   │                                    # Credential ID verification
-│   ├── actions_crawler.py               # Parses workflow YAML + queries GitHub API
-│   │                                    # Checks secrets configured in repo/org
-│   │                                    # Checks runner labels exist and online
-│   │                                    # Checks action versions
-│   │                                    # Checks env variables defined
-│   ├── docker_checker.py                # Checks Docker daemon, registry, permissions
-│   └── credentials_checker.py           # Cross-checks credentials across systems
-│
-├── analyzer/                            # LLM-based analysis
-│   ├── __init__.py
-│   ├── context_builder.py               # Merges logs + verification report
-│   ├── prompt_builder.py                # Builds structured prompts per task type
-│   ├── llm_client.py                    # Calls provider factory, handles retries
-│   ├── response_parser.py               # Parses LLM response into structured data
-│   └── cache.py                         # MD5-based response cache
-│
-├── agent/                               # Fix execution engine
-│   ├── __init__.py
-│   ├── fix_executor.py                  # Main orchestrator, confidence checks
-│   ├── fix_mapper.py                    # Maps failure type to appropriate fix
-│   ├── pipeline_fixes.py                # Pipeline fixes (retry, cache clear, etc.)
-│   └── audit_log.py                     # Append-only log of all decisions
-│
-├── copilot/                             # Proactive generation features
-│   ├── __init__.py
-│   ├── pipeline_generator.py            # Generates Jenkinsfile Groovy pipelines
-│   ├── actions_generator.py             # Generates GitHub Actions YAML workflows
-│   ├── secrets_manager.py               # Writes secrets to Jenkins/GitHub securely
-│   ├── repo_committer.py                # Commits generated files to GitHub
-│   └── jenkins_configurator.py          # Applies config to Jenkins via API
-│
-├── webhook/                             # Receives pipeline failure events
-│   ├── __init__.py
-│   └── server.py                        # FastAPI webhook server
-│
-├── web_ui/                              # Optional simple web interface
-│   ├── __init__.py
-│   ├── app.py                           # Flask app
-│   └── templates/
-│       └── index.html
-│
-├── templates/                           # Base templates for generation
-│   ├── jenkins/
-│   │   ├── python_pipeline.groovy
-│   │   ├── node_pipeline.groovy
-│   │   ├── java_pipeline.groovy
-│   │   └── docker_ecr_pipeline.groovy
-│   └── github_actions/
-│       ├── python_workflow.yml
-│       ├── node_workflow.yml
-│       ├── docker_ecr_workflow.yml
-│       └── deploy_workflow.yml
-│
-├── config/
-│   ├── __init__.py
-│   └── settings.py                      # Reads all config from environment
-│
-├── tests/
-│   ├── test_parser.py
-│   ├── test_verifier.py
-│   ├── test_analyzer.py
-│   └── test_copilot.py
-│
-├── docs/
-│   └── architecture.md
-│
-├── docker-compose.yml
-├── Dockerfile
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
----
-
-## Component Breakdown
-
-### providers/base.py
-Abstract interface every LLM provider must implement. Ensures all providers are completely interchangeable.
-
-```python
-class BaseLLMProvider(ABC):
-    async def complete(self, prompt, system, max_tokens, temperature) -> str
-    def is_available(self) -> bool
-```
-
-### providers/factory.py
-Reads task config from environment, instantiates the correct provider, handles fallback to Ollama if primary provider is unavailable.
-
-### parser/pipeline_parser.py
-Receives the full pipeline webhook payload. Returns a structured result identifying which stages passed, which stage failed first, the stage name, logs, and syntax definition. Passing stage logs are discarded immediately.
-
-### parser/log_cleaner.py
-Strips ANSI codes, timestamps, INFO lines. Keeps ERROR and WARN lines and 10 lines before first ERROR for context. Returns minimal clean log string typically under 300 tokens.
-
-### verification/jenkins_crawler.py
-The most original component. Does two things in sequence:
-
-First — parses the Jenkinsfile or pipeline definition to extract every tool reference from tools{} block, sh steps, withCredentials blocks, and environment blocks.
-
-Second — queries the Jenkins REST API to verify each reference against what is actually configured. Runs exact match and fuzzy match comparison and returns a structured verification report with facts only.
-
-### verification/actions_crawler.py
-Same concept for GitHub Actions. Parses workflow YAML to extract all secrets references, runner labels, action uses, and environment variables. Queries GitHub API to verify each one exists and is configured.
-
-### analyzer/context_builder.py
-Merges four inputs into a single optimized LLM payload: cleaned failed stage logs (~300 tokens), failing stage Groovy source (~150 tokens), tool verification report (~200 tokens), metadata (~50 tokens). Total approximately 1000 tokens regardless of full pipeline size. The stage source block gives the LLM ground truth to detect typos, invalid DSL steps, and misconfigurations directly from the Jenkinsfile rather than inferring from log output alone.
-
-### analyzer/cache.py
-MD5 hash of the combined context used as cache key. Same failure signature returns cached response at zero cost.
-
-### agent/fix_mapper.py
-Maps failure diagnosis to specific fix action. Tool configuration mismatches, credential issues, and plugin problems are never auto-fixed — always produce an alert with precise diagnosis and require manual resolution.
-
-### copilot/secrets_manager.py
-Accepts secret values from user via web UI only. Sends directly to Jenkins credentials API or GitHub secrets API. Never logs or stores raw values beyond the single API call. Only injects variable references into generated pipeline files.
-
----
-
-## LLM Provider System
-
-### Provider abstraction
-Every task specifies provider and model via environment variables. The factory reads config and returns the correct provider. All providers implement the same interface so task code never changes when providers change.
-
-### Adding a new provider in future
-1. Create providers/new_provider.py implementing BaseLLMProvider
-2. Register in providers/factory.py
-3. Add config keys to .env
-4. Zero changes to any other file
-
-### Fallback chain
-```
-Configured provider unavailable?
-→ Try Ollama local
-→ Ollama also unavailable?
-→ web UI notification: manual review required
-→ Never silently fail
-```
-
----
-
-## Model Routing Strategy
-
-### Fully environment driven — zero hardcoding
-
-```python
-TASK_MODEL_MAP = {
-    # No LLM — pure Python or API calls
-    "parse_pipeline":           None,
-    "clean_logs":               None,
-    "crawl_tools":              None,
-    "execute_fix":              None,
-    "format_notification":      None,
-    "handle_approval":          None,
-    "commit_to_repo":           None,
-    "manage_secrets":           None,
-
-    # Haiku or Llama 8B — fast and sufficient for structured analysis
-    "summarize_verification":   "claude-haiku-4-5-20251001",
-    "analyze_logs":             "claude-haiku-4-5-20251001",
-    "suggest_fix":              "claude-haiku-4-5-20251001",
-    "explain_error":            "claude-haiku-4-5-20251001",
-    "confidence_check":         "claude-haiku-4-5-20251001",
-
-    # Sonnet or Qwen2.5-Coder 32B — quality critical generation
-    "generate_jenkinsfile":     "claude-sonnet-4-6",
-    "generate_actions_yaml":    "claude-sonnet-4-6",
-    "plan_complex_fix":         "claude-sonnet-4-6",
-    "review_generated_code":    "claude-sonnet-4-6",
-}
-```
-
-### Environment switching examples
-
-**Cloud API (cheapest real cost):**
-```env
-DEFAULT_PROVIDER=anthropic
-LOG_ANALYSIS_MODEL=claude-haiku-4-5-20251001
-PIPELINE_GENERATION_MODEL=claude-sonnet-4-6
-```
-
-**Full local — M4 MacBook 32GB:**
-```env
-DEFAULT_PROVIDER=ollama
-LOG_ANALYSIS_MODEL=llama3.1:8b
-PIPELINE_GENERATION_MODEL=qwen2.5-coder:32b
-```
-
-**Mixed — local for analysis, cloud for generation:**
-```env
-LOG_ANALYSIS_PROVIDER=ollama
-LOG_ANALYSIS_MODEL=llama3.1:8b
-PIPELINE_GENERATION_PROVIDER=anthropic
-PIPELINE_GENERATION_MODEL=claude-sonnet-4-6
-```
-
----
-
-## Local Model Recommendations
-
-Optimized for Apple M4 MacBook Air with 32GB unified memory and 2TB external SSD.
-
-### For log analysis and failure diagnosis
-**Llama 3.1 8B** — runs fast on M4 via Metal GPU acceleration, uses ~5-6GB RAM, accurate on structured log analysis with clean focused context. Primary recommendation for all reactive analysis tasks.
-
-### For pipeline and YAML generation
-**Qwen2.5-Coder 32B** — code-specialized model, outperforms Llama 70B specifically for generating Groovy, YAML, and infrastructure files. Fits in 32GB unified memory. Top recommendation for all copilot generation tasks.
-
-**Llama 3.1 70B** — general purpose alternative, also fits in 32GB, good quality for generation.
-
-### For verification report summarization
-**Mistral 7B** — fast, accurate for short structured summarization, low RAM usage.
-
-### Setup commands
+### 1. Clone and configure
 
 ```bash
-# Store models on external SSD
+git clone https://github.com/adil-khan-723/devops-ai-agent
+cd devops-ai-agent
+cp .env.example .env
+```
+
+Edit `.env` — minimum required fields:
+
+```env
+JENKINS_URL=http://localhost:8080
+JENKINS_USER=admin
+JENKINS_TOKEN=your_jenkins_api_token
+
+GITHUB_TOKEN=ghp_...
+WEBHOOK_SECRET=your_webhook_secret
+
+# Choose provider:
+LLM_PROVIDER=ollama          # free, local — or: anthropic
+ANTHROPIC_API_KEY=           # required only if LLM_PROVIDER=anthropic
+```
+
+### 2. Start
+
+```bash
+docker-compose up
+```
+
+Or native (no Docker):
+
+```bash
+./start.sh
+```
+
+`start.sh` handles Docker socket permissions for Jenkins-in-Docker automatically. See [Docker socket section](#docker-socket-access) below.
+
+### 3. Configure Jenkins webhook
+
+In Jenkins → Job → Configure → Post-build actions → HTTP Request:
+
+```
+URL:    http://your-agent-host:8000/webhook
+Method: POST
+```
+
+### 4. Pull local models (optional — skip if using Anthropic)
+
+```bash
+ollama pull llama3.1:8b        # ~4.7 GB — analysis
+ollama pull qwen2.5-coder:32b  # ~20 GB  — pipeline generation
+```
+
+Models stored on external SSD:
+
+```bash
 export OLLAMA_MODELS=/Volumes/YourSSD/ollama-models
-echo 'export OLLAMA_MODELS=/Volumes/YourSSD/ollama-models' >> ~/.zshrc
-
-# Pull models
-ollama pull llama3.1:8b        # ~4.7GB  — log analysis
-ollama pull qwen2.5-coder:32b  # ~20GB   — pipeline generation
-ollama pull mistral:7b         # ~4.1GB  — lightweight tasks
-```
-
-Total disk: ~29GB across all models.
-
----
-
-## Cost Analysis
-
-### Token usage per pipeline failure event
-
-| Component | Tokens |
-|---|---|
-| Cleaned failed stage logs | ~300 |
-| Failing stage Groovy source | ~150 |
-| Tool verification report | ~200 |
-| Metadata + separators | ~50 |
-| Prompt instructions | ~150 |
-| Total input | ~1000 |
-| LLM output | ~400 |
-
-Compare to feeding full pipeline: 10,000+ tokens. 90% reduction.
-
-### Cost per call
-
-| Model | Cost per analysis call |
-|---|---|
-| Claude Haiku 3.5 | ~$0.0000023 |
-| Claude Sonnet 4.5 | ~$0.0000085 |
-| Ollama local | $0.00 |
-
-### Monthly production cost
-
-| Activity | Volume | Model | Cost |
-|---|---|---|---|
-| Pipeline failures | 200/month | Haiku | $0.001 |
-| Copilot generations | 100/month | Sonnet | $0.007 |
-| Total | | | ~$0.01/month |
-
-Development and testing phase: ~$0.015 total. Covered by Anthropic $5 free starter credits. Caching reduces costs a further 60-70% on projects with recurring errors.
-
----
-
-## Fix Capabilities
-
-### Pipeline Fixes
-
-| Fix | Trigger |
-|---|---|
-| Retry pipeline | Transient failure or network timeout |
-| Clear Docker build cache and retry | Layer cache corruption |
-| Pull fresh base image and retry | Stale image issues |
-| Clear npm / pip / maven cache and retry | Dependency cache corruption |
-| Increase timeout and retry | Pipeline timeout errors |
-
-### What Is Never Auto-Fixed
-
-These always produce a diagnostic alert with no execute button. Manual resolution required.
-
-- Tool name mismatches between Jenkinsfile and Jenkins Global Tool Configuration
-- Missing or inactive plugins
-- Missing or misconfigured credentials
-- Missing secrets in GitHub Actions
-- Runner label mismatches
-- IAM permission issues
-- Any fix requiring secret values
-
-The agent provides exact diagnosis — for example: "Jenkinsfile references 'Maven-3.8' but Jenkins has 'Maven3' configured. Rename the tool in Jenkins or update the Jenkinsfile tools{} block" — and the human resolves the root cause.
-
----
-
-## Copilot Capabilities
-
-### Web UI Commands
-
-```
-generate jenkins python-docker-ecr
-generate jenkins node-test-deploy
-generate jenkins java-maven-ecr
-generate actions python-test-ecr
-generate actions node-staging-prod
-add secret AWS_CREDENTIALS to pipeline
-explain [paste Jenkinsfile or workflow YAML]
-review [paste pipeline]
-```
-
-### What Gets Generated
-
-**Jenkins Pipelines (Groovy):**
-- Multi-stage pipelines with parallel execution
-- Docker build and ECR push stages
-- Deployment stages
-- Environment-specific variable injection
-- Shared library references
-- Error handling and failure notifications
-
-**GitHub Actions Workflows (YAML):**
-- Full workflow with triggers
-- Matrix build strategies
-- Environment secrets injection
-- Staging and production separation
-- Reusable workflow references
-- Docker and ECR deploy chains
-
-### Generation Process
-
-1. User sends natural language request via web UI
-2. Agent loads relevant base template from templates/
-3. Template plus user request sent to Sonnet or Qwen2.5-Coder
-4. LLM fills template intelligently based on request
-5. Generated file previewed in web UI
-6. User reviews and clicks Approve / Modify / Cancel
-7. On approval: committed to GitHub or applied to Jenkins via API
-8. Confirmation shown in web UI with file path and commit link
-
----
-
-## Web UI Interface
-
-### Failure notification — tool mismatch example
-
-```
-🚨 Pipeline Failure Detected
-────────────────────────────
-Job:    build-and-deploy
-Branch: main
-Stage:  Build (Stage 3 of 6)
-
-❌ What Failed:
-Maven build failed — tool not found
-
-🛠️ Tool Verification:
-  Maven 'Maven-3.8':  NOT FOUND in Jenkins ❌
-  Available:          'Maven3', 'maven-3.6'
-  Best match:         'Maven3'
-
-🔍 Root Cause:
-Name mismatch. Jenkinsfile references 'Maven-3.8'
-but Jenkins Global Tool Config has 'Maven3'.
-
-💡 Fix:
-Update Jenkinsfile:  maven 'Maven3'
-OR rename tool in Jenkins to 'Maven-3.8'
-
-🎯 Confidence: High
-
-[📋 I'll Fix This Manually]
-```
-
-### Failure notification — auto-fixable example
-
-```
-🚨 Pipeline Failure Detected
-────────────────────────────
-Stage: Docker Build (Stage 4 of 6)
-
-🛠️ Tool Verification:
-  Docker installed:   ✅
-  Daemon running:     ✅
-  Registry creds:     ✅
-  User in docker grp: ❌
-
-🔍 Root Cause:
-Jenkins user not in docker group.
-Permission denied when calling Docker daemon.
-
-💡 Fix:
-Add Jenkins user to docker group and restart.
-
-🎯 Confidence: High
-
-[✅ Apply Fix]  [🔁 Retry]  [❌ Dismiss]
-```
-
----
-
-## Security Design
-
-### Secrets handling
-- Accepted only via web UI — never exposed in logs or shared channels
-- Sent directly to Jenkins credentials API or GitHub secrets API
-- Never stored in memory beyond the single API call
-- Never logged to console, files, or audit log
-- Only variable references appear in generated files: ${AWS_CREDENTIALS}
-- Audit log records: secret name, who added it, timestamp — never the value
-
-### Fix execution boundaries
-- Every fix logged to audit log before execution begins
-- Audit log is append-only — no deletions or modifications
-- Tool config issues, credential issues, plugin issues never auto-fixed
-- Confidence threshold enforced — low confidence shows no execute button
-
----
-
-## Running Jenkins in Docker — Docker Socket Access
-
-When Jenkins runs inside a Docker container and your Jenkinsfiles contain `docker build` or `docker push` commands, Jenkins needs access to the Docker daemon socket (`/var/run/docker.sock`).
-
-### How it works
-
-```
-Your machine (macOS / Linux / Windows)
-└── Docker daemon  ←── owns /var/run/docker.sock
-    └── Jenkins container
-        └── /var/run/docker.sock  (bind-mounted from host)
-            └── Jenkinsfile: docker build ...  ──► talks to host daemon
-```
-
-The socket is mounted into the Jenkins container. Jenkins must have read/write permission on it.
-
-### start.sh handles this automatically
-
-`./start.sh` detects a running Jenkins container and fixes socket permissions on every startup:
-
-| Platform | Method |
-|---|---|
-| **macOS** (Docker Desktop) | `chmod 666` on the mounted socket via `docker exec` |
-| **Windows** (Docker Desktop) | Same as macOS |
-| **Linux** | Adds `jenkins` user to `docker` group inside container |
-
-You do not need to run anything manually — just run `./start.sh` as normal.
-
-### Security note
-
-`chmod 666` on the Docker socket grants **any process on the system** access to the Docker daemon, which is equivalent to root access. This is acceptable for a local development machine. Do not use this approach in a shared or production environment — use Docker-in-Docker (dind) or a rootless Docker setup instead.
-
-### If you manage Jenkins outside start.sh
-
-Run once after every Docker Desktop restart:
-
-```bash
-# macOS / Windows (Docker Desktop)
-docker exec -u root jenkins chmod 666 /var/run/docker.sock
-
-# Linux
-docker exec -u root jenkins usermod -aG docker jenkins
 ```
 
 ---
 
 ## Configuration Reference
 
-### .env.example
+Full `.env` reference:
 
 ```env
-# ── LLM ROUTING ──────────────────────────────────────────
+# ── LLM ROUTING ───────────────────────────────────────────────────────────
+LLM_PROVIDER=ollama                          # ollama | anthropic
+ANALYSIS_MODEL=llama3.1:8b                   # fast model for log analysis
+GENERATION_MODEL=qwen2.5-coder:14b           # quality model for generation
+LLM_FALLBACK_PROVIDER=ollama                 # fallback if primary unavailable
 
-DEFAULT_PROVIDER=anthropic
-# Options: anthropic, ollama
+CONFIDENCE_THRESHOLD=0.75                    # fixes below this are diagnostic-only
 
-LOG_ANALYSIS_PROVIDER=anthropic
-LOG_ANALYSIS_MODEL=claude-haiku-4-5-20251001
-
-VERIFICATION_SUMMARY_PROVIDER=anthropic
-VERIFICATION_SUMMARY_MODEL=claude-haiku-4-5-20251001
-
-FIX_SUGGESTION_PROVIDER=anthropic
-FIX_SUGGESTION_MODEL=claude-haiku-4-5-20251001
-
-PIPELINE_GENERATION_PROVIDER=anthropic
-PIPELINE_GENERATION_MODEL=claude-sonnet-4-6
-
-# ── CONFIDENCE THRESHOLD ─────────────────────────────────
-
-MIN_CONFIDENCE_FOR_EXECUTE=high
-# Options: high, medium, low
-
-# ── PROVIDER CREDENTIALS ─────────────────────────────────
-
-ANTHROPIC_API_KEY=sk-ant-...
-
+# ── OLLAMA ────────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_DEFAULT_MODEL=llama3.1:8b
-OLLAMA_MODELS=/Volumes/YourSSD/ollama-models
+OLLAMA_MODELS=/Volumes/SSD/ollama-models     # optional — path for model storage
+OLLAMA_TIMEOUT=120
 
-# ── JENKINS ──────────────────────────────────────────────
+# ── ANTHROPIC ─────────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY=                           # required when LLM_PROVIDER=anthropic
+ANTHROPIC_ANALYSIS_MODEL=claude-haiku-4-5-20251001
+ANTHROPIC_GENERATION_MODEL=claude-sonnet-4-6
 
+# ── JENKINS ───────────────────────────────────────────────────────────────
 JENKINS_URL=http://localhost:8080
 JENKINS_USER=admin
-JENKINS_TOKEN=your_jenkins_api_token
+JENKINS_TOKEN=                               # Jenkins API token (not password)
 
-# ── GITHUB ───────────────────────────────────────────────
+# ── GITHUB ────────────────────────────────────────────────────────────────
+GITHUB_TOKEN=                                # PAT with repo + secrets scopes
+GITHUB_ORG=
+GITHUB_DEFAULT_REPO=
+GITHUB_REPO=owner/repo                       # active project repo
 
-GITHUB_TOKEN=ghp_...
-GITHUB_REPO_OWNER=adil-khan-723
-GITHUB_DEFAULT_BRANCH=main
-
-# ── AWS ──────────────────────────────────────────────────
-
-AWS_DEFAULT_REGION=ap-south-1
-ECR_REGISTRY=your_account_id.dkr.ecr.ap-south-1.amazonaws.com
-
-# ── CACHING ──────────────────────────────────────────────
-
-CACHE_ENABLED=true
-CACHE_TTL_SECONDS=3600
-
-# ── WEBHOOK SERVER ────────────────────────────────────────
-
+# ── WEBHOOK SERVER ────────────────────────────────────────────────────────
 WEBHOOK_PORT=8000
-WEBHOOK_SECRET=your_webhook_secret
+WEBHOOK_SECRET=                              # shared secret for webhook validation
+WEBHOOK_HOST=0.0.0.0
 
-# ── LOGGING ──────────────────────────────────────────────
+# ── CACHING ───────────────────────────────────────────────────────────────
+REDIS_URL=                                   # blank = in-memory fallback
 
+# ── LOGGING ───────────────────────────────────────────────────────────────
 LOG_LEVEL=INFO
-AUDIT_LOG_PATH=./logs/audit.log
+AUDIT_LOG_PATH=audit.log
+```
+
+### Provider switching examples
+
+**Full cloud (Anthropic):**
+```env
+LLM_PROVIDER=anthropic
+ANALYSIS_MODEL=claude-haiku-4-5-20251001
+GENERATION_MODEL=claude-sonnet-4-6
+```
+
+**Full local (M4 MacBook 32GB):**
+```env
+LLM_PROVIDER=ollama
+ANALYSIS_MODEL=llama3.1:8b
+GENERATION_MODEL=qwen2.5-coder:32b
 ```
 
 ---
 
-## Build Phases & Timeline
+## Architecture
 
-### Phase 1 — Foundation (Week 1)
-- FastAPI webhook server receives pipeline failure events
-- Pipeline parser identifies failed stage
-- Log extractor pulls only failed stage logs
-- Log cleaner strips noise
-- Basic Ollama integration for free local testing
-- Web UI notifier sends formatted message
-- No fix execution yet — observation only
+### Module map
 
-Milestone: Pipeline fails → clean analysis posted to web UI
+| Module | What it does | Uses LLM? | Key file |
+|---|---|---|---|
+| `webhook/` | FastAPI server, receives Jenkins failure events | No | `server.py` |
+| `parser/` | Identify failed stage, extract + clean logs | No | `pipeline_parser.py`, `log_cleaner.py` |
+| `verification/` | Crawl Jenkins API, verify tool names, plugins, credentials | No | `jenkins_crawler.py` |
+| `analyzer/` | Build ~1000-token payload, call LLM, cache response | Yes | `context_builder.py`, `llm_client.py` |
+| `providers/` | LLM abstraction layer + fallback chain | — | `factory.py`, `base.py` |
+| `agent/` | Map failure → fix, confidence check, execute, audit log | No | `fix_executor.py`, `pipeline_fixes.py` |
+| `copilot/` | Generate pipelines from templates + NL, commit to GitHub | Yes | `pipeline_generator.py`, `secrets_manager.py` |
+| `ui/` | FastAPI routes serving the React web UI | No | `routes.py`, `chat_handler.py` |
+| `frontend/` | React + Tailwind web interface | — | `src/components/` |
 
-### Phase 2 — Tool Verification Crawler (Week 2)
-- Jenkins crawler — parse Jenkinsfile tool references from tools{} block and sh steps
-- Jenkins API queries for configured tools, plugins, credentials
-- Exact match and fuzzy match comparison logic
-- GitHub Actions crawler — parse workflow YAML for secrets, runners, actions
-- GitHub API queries for secrets and runner availability
-- Context builder merges logs + verification report
-- Confidence threshold implementation
+### System flow — reactive path
 
-Milestone: Tool mismatches detected and reported precisely before LLM call
+```
+Pipeline fails (8 stages, stage 5 failed)
+│
+├── Stages 1–4 logs: discarded immediately
+│
+└── Stage 5 only →
+        │
+        ├── [parallel]
+        │     ├── Log cleaner
+        │     │     Strip ANSI, timestamps, INFO lines
+        │     │     Keep ERROR/WARN + 10 lines before first ERROR
+        │     │     Output: ~300 tokens
+        │     │
+        │     └── Jenkins crawler
+        │           Parse tools{} block + withCredentials + sh steps
+        │           Query Jenkins API: tool names, plugins, credential IDs
+        │           Exact match → fuzzy match (Levenshtein ≥ 0.85)
+        │           Output: verified facts report, ~200 tokens
+        │
+        └── Context builder merges:
+              Cleaned logs (~300 tok) + Stage source (~150 tok)
+              + Verification report (~200 tok) + metadata (~50 tok)
+              Total: ~1000 tokens (was 10,000+)
+                    │
+                    ▼
+              LLM Analyzer
+              (Haiku or Llama 3.1 8B)
+              Returns: what failed, root cause, fix, confidence
+                    │
+                    ▼
+              Web UI card
+              Confidence ≥ 0.75 → [Apply Fix] [Retry] [Dismiss]
+              Confidence < 0.75 → [Handle Manually]
+                    │
+              User approves
+                    │
+                    ▼
+              Fix executor → Jenkins API → pipeline re-triggered
+              Result posted back to UI card
+              All decisions appended to audit.log
+```
 
-### Phase 3 — Approval Flow and Fix Execution (Week 3)
-- Web UI approval handler
-- Button interactions — Approve, Retry, Dismiss
-- Audit log implementation
-- Fix executor for pipeline-level fixes
-- Pipeline rerun after fix applied
-- Response caching layer
-- Fallback chain implementation
+### Tool name mismatch detection
 
-Milestone: User approves fixes via web UI, agent executes and reports result
+Jenkins tool name matching is exact. A Jenkinsfile referencing `maven 'Maven-3.8'` fails when Jenkins has `Maven3` configured, and the error message doesn't say that's why.
 
-### Phase 4 — Copilot Mode (Week 4)
-- Pipeline generator for Jenkins Groovy
-- GitHub Actions YAML generator
-- Base templates for common patterns
-- Web UI command handler
-- Repo committer via GitHub API
-- Jenkins configurator via API
+The crawler finds it:
 
-Milestone: Generate complete pipelines from natural language in web UI
+1. Parse `tools {}` blocks, `withMaven()` calls, and `tool()` steps via regex
+2. Query Jenkins `/api/json` for all configured tool names
+3. Exact match — if it passes, done
+4. No exact match: compute Levenshtein similarity against all configured names
+5. Best match below 0.85 is flagged as a mismatch with the closest name surfaced
 
-### Phase 5 — Secrets Management and Polish (Week 5)
-- Secrets manager for Jenkins and GitHub
-- Multi-provider LLM support fully wired
-- Provider factory with fallback chain tested
-- Docker Compose full stack setup
-- Optional simple web UI
+Credential IDs get the same treatment — every `credentials('ID')` and `credentialsId: 'ID'` reference is checked against the Jenkins credentials store.
 
-Milestone: Full system running end to end locally
+### Docker socket access
 
-### Phase 6 — Documentation and Publication (Week 6)
-- Comprehensive README with architecture diagram
-- Test coverage for core components
-- GitHub repo cleanup
-- Dev.to article: Building a Human-in-the-Loop AI Agent for CI/CD Failure Recovery
-- LinkedIn post with architecture walkthrough
+When Jenkins runs in Docker and Jenkinsfiles use `docker build` / `docker push`, the container needs access to the host Docker daemon via `/var/run/docker.sock`.
 
-Milestone: Published, documented, live on GitHub
+`./start.sh` handles this automatically:
+
+| Platform | Method |
+|---|---|
+| macOS / Windows (Docker Desktop) | `chmod 666` on mounted socket via `docker exec` |
+| Linux | Adds `jenkins` user to `docker` group inside container |
+
+**Security note:** `chmod 666` on the Docker socket grants any process on the machine access to the Docker daemon — equivalent to root. Acceptable on a local dev machine, not in shared or production environments. Use Docker-in-Docker or rootless Docker for those.
+
+Manual fix (after every Docker Desktop restart on Mac/Windows):
+
+```bash
+docker exec -u root jenkins chmod 666 /var/run/docker.sock
+```
 
 ---
 
-## Resume Value
+## Tech Stack
 
-### Resume line
+| Layer | Technology |
+|---|---|
+| Language | ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white) |
+| Webhook server | ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white) + Uvicorn |
+| Web UI (frontend) | ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black) ![Tailwind](https://img.shields.io/badge/Tailwind-3-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white) Framer Motion · Radix UI |
+| Cloud LLM | ![Claude](https://img.shields.io/badge/Claude-Haiku%20%2F%20Sonnet-D4A27F?style=flat-square&logo=anthropic&logoColor=white) |
+| Local LLM | ![Ollama](https://img.shields.io/badge/Ollama-Llama%203.1%20%2F%20Qwen2.5-black?style=flat-square&logo=ollama&logoColor=white) |
+| Containerization | ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white) |
+| Jenkins integration | python-jenkins + httpx → Jenkins REST API |
+| GitHub integration | ![GitHub](https://img.shields.io/badge/GitHub-PyGithub-181717?style=flat-square&logo=github&logoColor=white) |
+| Caching | ![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white) (in-memory fallback) |
+| Config | pydantic-settings + python-dotenv |
+| Testing | ![pytest](https://img.shields.io/badge/pytest-135%20tests-0A9EDC?style=flat-square&logo=pytest&logoColor=white) |
+| Tool fuzzy matching | python-Levenshtein (threshold 0.85) |
 
-Built an AI-powered CI/CD Copilot using local and cloud LLMs (Ollama/Llama 3.1, Qwen2.5-Coder 32B, Claude Haiku/Sonnet) with a deterministic tool-verification crawler that cross-checks Jenkins Global Tool Configuration and GitHub Actions secrets against pipeline definitions before LLM analysis — achieving 90% token reduction through selective context feeding, human-in-the-loop approval via web UI, automated fix execution, and a Copilot mode for generating Jenkinsfiles and GitHub Actions workflows from natural language.
+---
 
-### Key interview talking points
+## Cost
 
-**On selective context feeding:**
-Instead of feeding the entire pipeline log to the LLM, I parse the result first and only send the failed stage — about 1000 tokens instead of 10,000 plus. That is a 90% token reduction with better accuracy because the LLM is not distracted by passing stage noise.
+### Tokens per failure event
 
-**On the tool verification crawler:**
-One of the most common CI/CD failures is a tool name mismatch — the Jenkinsfile references a tool name that does not exactly match what is configured in Jenkins Global Tool Configuration. My crawler detects this deterministically before calling the LLM by parsing the Jenkinsfile, querying the Jenkins API, and running exact plus fuzzy match comparison. The LLM receives verified facts instead of guessing from confusing error messages. This eliminates an entire category of hallucination.
+| Component | Tokens |
+|---|---|
+| Cleaned failed-stage logs | ~300 |
+| Failed stage Groovy source | ~150 |
+| Tool verification report | ~200 |
+| Metadata + prompt instructions | ~200 |
+| **Total input** | **~850–1000** |
+| LLM output | ~400 |
 
-**On human-in-the-loop:**
-The agent never executes anything automatically. Every fix requires explicit approval in the web UI. Tool configuration issues, credential problems, and plugin issues never get an auto-fix button at all — always manual resolution. This is how production AI systems are designed responsibly.
+Without stage isolation: 10,000+ tokens per event.
 
-**On the provider abstraction:**
-No model is hardcoded anywhere. The entire system switches from Claude to locally running Llama or Qwen with one environment variable change. The task code never knows which provider it is talking to. On my M4 MacBook with 32GB I can run Qwen2.5-Coder 32B locally for free for all generation tasks.
+### Cost per analysis call
 
-**On cost:**
-The entire system costs about one cent per month in production. The 90% token optimization, caching, and smart model routing make it essentially free at any reasonable scale.
+| Model | Cost |
+|---|---|
+| Claude Haiku | ~$0.000002 |
+| Claude Sonnet | ~$0.000009 |
+| Ollama (local) | $0.00 |
+
+### Monthly production estimate
+
+| Activity | Volume | Cost |
+|---|---|---|
+| Pipeline failure analyses | 200/month @ Haiku | $0.001 |
+| Copilot generations | 100/month @ Sonnet | $0.007 |
+| **Total** | | **~$0.01/month** |
+
+Response caching (MD5 hash of cleaned logs + stage source + verification report) reduces this further — recurring failures cost zero after the first call.
 
 ---
 
 ## Developer
 
-**Adil Khan**
-DevOps Engineer | 
-HashiCorp Certified Terraform Associate (004)
+**Adil Khan** — DevOps Engineer, HashiCorp Certified Terraform Associate (004)
+AWS Cloud Intern @ F13 Technology
 
-- GitHub: https://github.com/adil-khan-723
-- LinkedIn: https://www.linkedin.com/in/adilk3682
-- Dev.to: https://dev.to/adil-khan-723
-- Email: adilk81054@gmail.com
+[GitHub](https://github.com/adil-khan-723) · [LinkedIn](https://www.linkedin.com/in/adilk3682) · [Dev.to](https://dev.to/adil-khan-723) · adilk81054@gmail.com
 
----
-
-*This README is the complete living specification for the DevOps AI Agent project. Every architectural decision, optimization, clarification, and component discussed during planning is documented here. Scope is strictly CI/CD — Jenkins and GitHub Actions. Kubernetes cluster monitoring and management is out of scope and belongs to a separate project. Use this as the source of truth when switching between development sessions or chat contexts.*
