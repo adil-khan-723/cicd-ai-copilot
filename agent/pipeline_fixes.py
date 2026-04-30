@@ -516,18 +516,22 @@ def configure_credential(
         s = get_settings()
         server = _get_jenkins_server()
 
+        session = requests.Session()
+        session.auth = (s.jenkins_user, s.jenkins_token)
+
         crumb_url = f"{s.jenkins_url}/crumbIssuer/api/json"
-        crumb_resp = requests.get(crumb_url, auth=(s.jenkins_user, s.jenkins_token), timeout=10)
+        crumb_resp = session.get(crumb_url, timeout=10)
         crumb_resp.raise_for_status()
         crumb_data = crumb_resp.json()
-        crumb_header = {crumb_data["crumbRequestField"]: crumb_data["crumb"]}
+        session.headers.update({
+            crumb_data["crumbRequestField"]: crumb_data["crumb"],
+            "Content-Type": "application/xml",
+        })
 
         create_url = f"{s.jenkins_url}/credentials/store/system/domain/_/createCredentials"
-        resp = requests.post(
+        resp = session.post(
             create_url,
             data=cred_xml.encode("utf-8"),
-            headers={"Content-Type": "application/xml", **crumb_header},
-            auth=(s.jenkins_user, s.jenkins_token),
             timeout=10,
         )
         if resp.status_code not in (200, 201, 302):
