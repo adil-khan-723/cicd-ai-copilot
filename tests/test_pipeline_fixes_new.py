@@ -101,3 +101,117 @@ class TestConfigureCredential:
 
         assert result.success is False
         assert result.fix_type == "configure_credential"
+
+    def test_injects_secret_text_value(self):
+        server = MagicMock()
+        crumb_response = MagicMock()
+        crumb_response.raise_for_status.return_value = None
+        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
+        create_response = MagicMock()
+        create_response.status_code = 200
+        posted_xml = {}
+
+        def capture_post(url, data, **kwargs):
+            posted_xml["body"] = data.decode("utf-8")
+            return create_response
+
+        with (
+            patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
+            patch("requests.get", return_value=crumb_response),
+            patch("requests.post", side_effect=capture_post),
+        ):
+            result = configure_credential(
+                job_name="node-deploy",
+                build_number="3",
+                credential_id="MY_TOKEN",
+                credential_type="secret_text",
+                secret_value="supersecret",
+            )
+
+        assert result.success is True
+        assert "<secret>supersecret</secret>" in posted_xml["body"]
+
+    def test_injects_username_password_values(self):
+        server = MagicMock()
+        crumb_response = MagicMock()
+        crumb_response.raise_for_status.return_value = None
+        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
+        create_response = MagicMock()
+        create_response.status_code = 200
+        posted_xml = {}
+
+        def capture_post(url, data, **kwargs):
+            posted_xml["body"] = data.decode("utf-8")
+            return create_response
+
+        with (
+            patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
+            patch("requests.get", return_value=crumb_response),
+            patch("requests.post", side_effect=capture_post),
+        ):
+            result = configure_credential(
+                job_name="node-deploy",
+                build_number="3",
+                credential_id="GIT_CREDS",
+                credential_type="username_password",
+                username="adil",
+                password="hunter2",
+            )
+
+        assert result.success is True
+        assert "<username>adil</username>" in posted_xml["body"]
+        assert "<password>hunter2</password>" in posted_xml["body"]
+
+    def test_injects_ssh_key_values(self):
+        server = MagicMock()
+        crumb_response = MagicMock()
+        crumb_response.raise_for_status.return_value = None
+        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
+        create_response = MagicMock()
+        create_response.status_code = 200
+        posted_xml = {}
+
+        def capture_post(url, data, **kwargs):
+            posted_xml["body"] = data.decode("utf-8")
+            return create_response
+
+        with (
+            patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
+            patch("requests.get", return_value=crumb_response),
+            patch("requests.post", side_effect=capture_post),
+        ):
+            result = configure_credential(
+                job_name="node-deploy",
+                build_number="3",
+                credential_id="DEPLOY_KEY",
+                credential_type="ssh_key",
+                ssh_username="git",
+                private_key="-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----",
+            )
+
+        assert result.success is True
+        assert "<username>git</username>" in posted_xml["body"]
+        assert "-----BEGIN OPENSSH PRIVATE KEY-----" in posted_xml["body"]
+
+    def test_skip_retrigger_does_not_call_build_job(self):
+        server = MagicMock()
+        crumb_response = MagicMock()
+        crumb_response.raise_for_status.return_value = None
+        crumb_response.json.return_value = {"crumbRequestField": "Jenkins-Crumb", "crumb": "abc123"}
+        create_response = MagicMock()
+        create_response.status_code = 200
+
+        with (
+            patch("agent.pipeline_fixes._get_jenkins_server", return_value=server),
+            patch("requests.get", return_value=crumb_response),
+            patch("requests.post", return_value=create_response),
+        ):
+            result = configure_credential(
+                job_name="node-deploy",
+                build_number="3",
+                credential_id="MY_TOKEN",
+                skip_retrigger=True,
+            )
+
+        assert result.success is True
+        server.build_job.assert_not_called()

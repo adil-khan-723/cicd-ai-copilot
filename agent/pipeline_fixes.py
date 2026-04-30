@@ -446,16 +446,26 @@ def configure_credential(
     build_number: str = "0",
     credential_id: str = "",
     credential_type: str = "secret_text",
+    secret_value: str = "",
+    username: str = "",
+    password: str = "",
+    ssh_username: str = "",
+    private_key: str = "",
+    skip_retrigger: bool = False,
 ) -> FixResult:
     """
-    Create a placeholder credential in Jenkins global system store.
+    Create a credential in Jenkins global system store.
+
+    If value fields are provided, the credential is created with real values.
+    If empty, a placeholder is created and the description instructs the operator
+    to update the value in Jenkins UI.
 
     credential_type (from LLM):
       - 'secret_text'       → StringCredentials (for string() bindings)
       - 'username_password' → UsernamePasswordCredentials (for usernamePassword() bindings)
       - 'ssh_key'           → BasicSSHUserPrivateKey (for sshUserPrivateKey() bindings)
 
-    Credentials are created with empty/placeholder values — operator must update in Jenkins UI.
+    skip_retrigger: if True, credential is created but job is NOT retriggered.
     """
     import requests
 
@@ -474,8 +484,8 @@ def configure_credential(
             "<com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>"
             "<scope>GLOBAL</scope>"
             f"<id>{credential_id}</id>"
-            "<username></username>"
-            "<password></password>"
+            f"<username>{username}</username>"
+            f"<password>{password}</password>"
             f"<description>{desc}</description>"
             "</com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>"
         )
@@ -484,9 +494,9 @@ def configure_credential(
             "<com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey>"
             "<scope>GLOBAL</scope>"
             f"<id>{credential_id}</id>"
-            "<username></username>"
+            f"<username>{ssh_username}</username>"
             "<privateKeySource class=\"com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey$DirectEntryPrivateKeySource\">"
-            "<privateKey></privateKey>"
+            f"<privateKey>{private_key}</privateKey>"
             "</privateKeySource>"
             f"<description>{desc}</description>"
             "</com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey>"
@@ -497,7 +507,7 @@ def configure_credential(
             "<org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl>"
             "<scope>GLOBAL</scope>"
             f"<id>{credential_id}</id>"
-            "<secret></secret>"
+            f"<secret>{secret_value}</secret>"
             f"<description>{desc}</description>"
             "</org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl>"
         )
@@ -525,13 +535,19 @@ def configure_credential(
                 f"Credential creation returned HTTP {resp.status_code}: {resp.text[:200]}"
             )
 
-        server.build_job(job_name)
-        logger.info("configure_credential: created '%s' (type=%s) for job %s, retriggered",
-                    credential_id, cred_type, job_name)
+        if not skip_retrigger:
+            server.build_job(job_name)
+            logger.info("configure_credential: created '%s' (type=%s) for job %s, retriggered",
+                        credential_id, cred_type, job_name)
+        else:
+            logger.info("configure_credential: created '%s' (type=%s) for job %s (no retrigger)",
+                        credential_id, cred_type, job_name)
+
+        detail_suffix = "Job retriggered." if not skip_retrigger else "Update value in Jenkins UI, then retrigger."
         return FixResult(
             success=True,
             fix_type="configure_credential",
-            detail=f"Credential '{credential_id}' ({cred_type}) created in Jenkins (placeholder — update value in Jenkins UI). Job retriggered.",
+            detail=f"Credential '{credential_id}' ({cred_type}) created in Jenkins. {detail_suffix}",
         )
     except jenkins.JenkinsException as e:
         logger.error("configure_credential failed for %s: %s", job_name, e)
