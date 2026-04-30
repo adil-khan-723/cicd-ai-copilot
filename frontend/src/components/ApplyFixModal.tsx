@@ -119,7 +119,7 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
       setSshUsername('')
       setPrivateKey('')
     }
-  }, [open])
+  }, [open, typeFromLLM])
 
   const credFieldsFilled =
     !isCredential ||
