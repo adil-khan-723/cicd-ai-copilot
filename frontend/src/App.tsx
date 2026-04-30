@@ -26,7 +26,13 @@ export default function App() {
   const [profilePicking, setProfilePicking] = useState(false)
   const [repoName,      setRepoName]      = useState('')
   const [jenkinsStatus, setJenkinsStatus] = useState<'connected' | 'disconnected' | 'unknown'>('unknown')
-  const [cards,         setCards]         = useState<Map<string, BuildCard>>(new Map())
+  const [cards,         setCards]         = useState<Map<string, BuildCard>>(() => {
+    try {
+      const raw = localStorage.getItem('pipeline_feed_cards')
+      if (raw) return new Map(JSON.parse(raw) as [string, BuildCard][])
+    } catch { /* corrupt storage — start fresh */ }
+    return new Map()
+  })
   const [bootDone,      setBootDone]      = useState(false)
 
   // ── Chat state — multi-session store keyed per profile ───────────────────
@@ -150,6 +156,13 @@ export default function App() {
 
   useEventStream(handleEvent)
 
+  // Persist feed cards to localStorage on every change
+  useEffect(() => {
+    try {
+      localStorage.setItem('pipeline_feed_cards', JSON.stringify(Array.from(cards.entries())))
+    } catch { /* storage full — ignore */ }
+  }, [cards])
+
   function dismissCard(key: string) {
     setCards(prev => {
       const next = new Map(prev)
@@ -161,6 +174,7 @@ export default function App() {
 
   function clearFeed() {
     setCards(new Map())
+    localStorage.removeItem('pipeline_feed_cards')
   }
 
   function discardJob(job: string) {
