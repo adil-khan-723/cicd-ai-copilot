@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2, Clock, Copy, Check } from 'lucide-react'
+import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2, Clock, Copy, Check, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
 import { ApplyFixModal } from './ApplyFixModal'
 import { cn } from '@/lib/utils'
-import type { BuildCard as BuildCardType } from '@/types'
+import type { BuildCard as BuildCardType, CredentialFields } from '@/types'
 
 const CONFIDENCE_THRESHOLD = 0.75
 
@@ -88,6 +88,10 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
   const [fixing,        setFixing]        = useState(false)
   const [modalOpen,     setModalOpen]     = useState(false)
   const [copied,        setCopied]        = useState(false)
+  const [pendingCredRetrigger, setPendingCredRetrigger] = useState<{
+    credentialId: string
+    jenkinsUrl: string
+  } | null>(null)
 
   const { analysis, fixResult, steps, dismissed } = card
   const isRunning  = !analysis && steps.some(s => s.status === 'running')
@@ -95,14 +99,17 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
   const canAutoFix = analysis && !DIAGNOSTIC_TYPES.has(analysis.fix_type) &&
                      analysis.confidence >= CONFIDENCE_THRESHOLD && !fixResult && isLatestFailing
 
-  async function applyFix() {
+  async function applyFix(credFields?: CredentialFields | null) {
     if (!analysis) return
     setModalOpen(false)
     setFixing(true)
+
+    const isSelfConfigure = analysis.fix_type === 'configure_credential' && credFields === null
+
     try {
-      const body: Record<string, string> = {
-        fix_type: analysis.fix_type,
-        job_name: card.job,
+      const body: Record<string, string | undefined> = {
+        fix_type:     analysis.fix_type,
+        job_name:     card.job,
         build_number: String(card.build),
       }
 
@@ -113,25 +120,43 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
       }
 
       if (analysis.fix_type === 'configure_credential' && analysis.verification?.missing_credentials?.[0]) {
-        body.credential_id = analysis.verification.missing_credentials[0]
-        if (analysis.credential_type) body.credential_type = analysis.credential_type
+        body.credential_id    = analysis.verification.missing_credentials[0]
+        body.credential_type  = credFields?.credential_type ?? analysis.credential_type
+        if (credFields != null) {
+          body.secret_value = credFields.secret_value
+          body.username     = credFields.username
+          body.password     = credFields.password
+          body.ssh_username = credFields.ssh_username
+          body.private_key  = credFields.private_key
+        }
+        if (isSelfConfigure) {
+          body.skip_retrigger = 'true'
+        }
       }
 
       if (analysis.fix_type === 'fix_step_typo' || analysis.fix_type === 'increase_timeout') {
-        if (analysis.bad_step)    body.bad_step    = analysis.bad_step
+        if (analysis.bad_step)     body.bad_step     = analysis.bad_step
         if (analysis.correct_step) body.correct_step = analysis.correct_step
       }
 
       if (analysis.fix_type === 'pull_image') {
-        if (analysis.bad_image)    body.bad_image    = analysis.bad_image
+        if (analysis.bad_image)     body.bad_image     = analysis.bad_image
         if (analysis.correct_image) body.correct_image = analysis.correct_image
       }
 
       await fetch('/api/fix', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body:    JSON.stringify(body),
       })
+
+      if (isSelfConfigure && analysis.verification?.missing_credentials?.[0]) {
+        const settings = await fetch('/api/settings').then(r => r.json()).catch(() => ({}))
+        setPendingCredRetrigger({
+          credentialId: analysis.verification.missing_credentials[0],
+          jenkinsUrl:   settings.jenkins_url ?? '',
+        })
+      }
     } finally { setFixing(false) }
   }
 
@@ -335,6 +360,55 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
               onCancel={() => setModalOpen(false)}
             />
           )}
+
+                {/* Pending credential retrigger banner */}
+                {pendingCredRetrigger && (
+                  <div className="mt-2 rounded-xl border border-[rgba(46,109,160,0.25)] bg-[#f0f7ff] px-4 py-3 flex items-start gap-3">
+                    <KeyRound className="h-4 w-4 text-[#2e6da0] shrink-0 mt-0.5" strokeWidth={1.8} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] text-[#1e4a72] font-medium leading-relaxed">
+                        Credential <code className="font-mono bg-[#dbeafe] px-1 rounded">{pendingCredRetrigger.credentialId}</code> created as placeholder.
+                      </p>
+                      <p className="text-[11px] text-[#2e6da0] mt-0.5">Fill the value in Jenkins, then retrigger.</p>
+                      <div className="flex gap-2 mt-2">
+                        {pendingCredRetrigger.jenkinsUrl && (
+                          <a
+                            href={`${pendingCredRetrigger.jenkinsUrl}/credentials/store/system/domain/_/credential/${pendingCredRetrigger.credentialId}/update`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="h-7 px-3 rounded-lg text-[11px] font-semibold border border-[rgba(46,109,160,0.3)] text-[#2e6da0] bg-white hover:bg-[#dbeafe] transition-colors inline-flex items-center gap-1"
+                          >
+                            Open Jenkins ↗
+                          </a>
+                        )}
+                        <button
+                          onClick={async () => {
+                            setPendingCredRetrigger(null)
+                            await fetch('/api/fix', {
+                              method:  'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body:    JSON.stringify({
+                                fix_type:     'retry',
+                                job_name:     card.job,
+                                build_number: String(card.build),
+                              }),
+                            })
+                          }}
+                          className="h-7 px-3 rounded-lg text-[11px] font-semibold bg-[#2e6da0] text-white hover:bg-[#265d8c] transition-colors cursor-pointer"
+                        >
+                          Retrigger Job
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setPendingCredRetrigger(null)}
+                      className="shrink-0 text-text-dim hover:text-text-muted transition-colors"
+                      aria-label="Dismiss"
+                    >
+                      <X className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    </button>
+                  </div>
+                )}
 
           {fixResult && (
             <div className={cn(
