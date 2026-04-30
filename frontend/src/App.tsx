@@ -26,13 +26,7 @@ export default function App() {
   const [profilePicking, setProfilePicking] = useState(false)
   const [repoName,      setRepoName]      = useState('')
   const [jenkinsStatus, setJenkinsStatus] = useState<'connected' | 'disconnected' | 'unknown'>('unknown')
-  const [cards,         setCards]         = useState<Map<string, BuildCard>>(() => {
-    try {
-      const raw = localStorage.getItem('pipeline_feed_cards')
-      if (raw) return new Map(JSON.parse(raw) as [string, BuildCard][])
-    } catch { /* corrupt storage — start fresh */ }
-    return new Map()
-  })
+  const [cards,         setCards]         = useState<Map<string, BuildCard>>(new Map())
   const [bootDone,      setBootDone]      = useState(false)
 
   // ── Chat state — multi-session store keyed per profile ───────────────────
@@ -158,10 +152,11 @@ export default function App() {
 
   // Persist feed cards to localStorage on every change
   useEffect(() => {
+    if (!activeProfileId) return
     try {
-      localStorage.setItem('pipeline_feed_cards', JSON.stringify(Array.from(cards.entries())))
+      localStorage.setItem(`pipeline_feed_cards_${activeProfileId}`, JSON.stringify(Array.from(cards.entries())))
     } catch { /* storage full — ignore */ }
-  }, [cards])
+  }, [cards, activeProfileId])
 
   function dismissCard(key: string) {
     setCards(prev => {
@@ -174,7 +169,7 @@ export default function App() {
 
   function clearFeed() {
     setCards(new Map())
-    localStorage.removeItem('pipeline_feed_cards')
+    if (activeProfileId) localStorage.removeItem(`pipeline_feed_cards_${activeProfileId}`)
   }
 
   function discardJob(job: string) {
@@ -198,10 +193,14 @@ export default function App() {
 
   function handleProfileSelected(profileId: string) {
     document.documentElement.classList.remove('dark')
-    // Only wipe cards when switching profiles — not on initial selection
-    if (activeProfileId && activeProfileId !== profileId) {
-      setCards(new Map())
-      localStorage.removeItem('pipeline_feed_cards')
+    // Save current profile's cards before switching, then load new profile's cards
+    if (activeProfileId !== profileId) {
+      try {
+        const saved = localStorage.getItem(`pipeline_feed_cards_${profileId}`)
+        setCards(saved ? new Map(JSON.parse(saved) as [string, BuildCard][]) : new Map())
+      } catch {
+        setCards(new Map())
+      }
     }
     setActiveProfileId(profileId)
     setIsConfigured(true)
