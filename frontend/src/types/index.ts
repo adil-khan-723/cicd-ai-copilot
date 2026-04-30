@@ -53,6 +53,15 @@ export interface AnalysisCompleteEvent {
   credential_type?: string
 }
 
+export interface CredentialFields {
+  credential_type: string   // 'secret_text' | 'username_password' | 'ssh_key'
+  secret_value?: string
+  username?: string
+  password?: string
+  ssh_username?: string
+  private_key?: string
+}
+
 export interface FixResultEvent {
   type: 'fix_result'
   job: string
