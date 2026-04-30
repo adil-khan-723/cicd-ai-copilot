@@ -12,6 +12,7 @@ import type { ChatMessage as Message } from '@/types'
 import type { useChatStore } from '@/hooks/useChatStore'
 import { PipelineCommitModal } from '@/components/PipelineCommitModal'
 import { MissingCredentialModal } from '@/components/MissingCredentialModal'
+import type { PendingCredential } from '@/components/PipelineCommitModal'
 
 type ChatStore = ReturnType<typeof useChatStore>
 type HistoryEntry = { role: 'user' | 'assistant'; content: string }
@@ -281,7 +282,7 @@ export function ChatPanel({ chatStore, streaming, setStreaming }: ChatPanelProps
   const [input,            setInput]            = useState('')
   const [commitTarget,     setCommitTarget]     = useState<Message | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [pendingCreds,     setPendingCreds]     = useState<{ ids: string[]; jobName: string } | null>(null)
+  const [pendingCreds,     setPendingCreds]     = useState<{ items: PendingCredential[]; jobName: string } | null>(null)
   const [credIdx,          setCredIdx]          = useState(0)
   // Once user interacts with suggestions (clicks one or starts typing), hide them
   const [suggestionsGone,  setSuggestionsGone]  = useState(false)
@@ -350,13 +351,13 @@ export function ChatPanel({ chatStore, streaming, setStreaming }: ChatPanelProps
     }
   }
 
-  function handleCommitted(missingCredentials: string[]) {
+  function handleCommitted(pending: PendingCredential[]) {
     if (!commitTarget || !activeChatId) return
     const jobName = commitTarget.content.slice(0, 80)
     setMessages(activeChatId, m => m.map(x => x.id === commitTarget.id ? { ...x, committed: true } : x))
     setCommitTarget(null)
-    if (missingCredentials.length > 0) {
-      setPendingCreds({ ids: missingCredentials, jobName })
+    if (pending.length > 0) {
+      setPendingCreds({ items: pending, jobName })
       setCredIdx(0)
     }
   }
@@ -387,7 +388,7 @@ export function ChatPanel({ chatStore, streaming, setStreaming }: ChatPanelProps
     }
     if (!pendingCreds) return
     const nextIdx = credIdx + 1
-    if (nextIdx >= pendingCreds.ids.length) {
+    if (nextIdx >= pendingCreds.items.length) {
       setPendingCreds(null)
       setCredIdx(0)
     } else {
@@ -521,10 +522,10 @@ export function ChatPanel({ chatStore, streaming, setStreaming }: ChatPanelProps
             {pendingCreds && (
               <MissingCredentialModal
                 open={true}
-                credentialId={pendingCreds.ids[credIdx]}
+                pending={pendingCreds.items[credIdx]}
                 jobName={pendingCreds.jobName}
                 index={credIdx}
-                total={pendingCreds.ids.length}
+                total={pendingCreds.items.length}
                 onDone={handleCredDone}
                 onSkipAll={() => { setPendingCreds(null); setCredIdx(0) }}
               />

@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, KeyRound, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { CredentialFields } from '@/types'
+import type { PendingCredential } from '@/components/PipelineCommitModal'
 
 interface Props {
   open: boolean
-  credentialId: string
+  pending: PendingCredential
   jobName: string
   index: number
   total: number
@@ -22,7 +23,8 @@ const TABS: { value: CredType; label: string }[] = [
   { value: 'ssh_key',           label: 'SSH Key'      },
 ]
 
-export function MissingCredentialModal({ open, credentialId, jobName, index, total, onDone, onSkipAll }: Props) {
+export function MissingCredentialModal({ open, pending, jobName, index, total, onDone, onSkipAll }: Props) {
+  const [credId,      setCredId]      = useState(pending.credentialId)
   const [credType,    setCredType]    = useState<CredType>('secret_text')
   const [secretValue, setSecretValue] = useState('')
   const [username,    setUsername]    = useState('')
@@ -32,6 +34,7 @@ export function MissingCredentialModal({ open, credentialId, jobName, index, tot
 
   useEffect(() => {
     if (open) {
+      setCredId(pending.credentialId)
       setCredType('secret_text')
       setSecretValue('')
       setUsername('')
@@ -39,7 +42,7 @@ export function MissingCredentialModal({ open, credentialId, jobName, index, tot
       setSshUsername('')
       setPrivateKey('')
     }
-  }, [open, credentialId])
+  }, [open, pending.credentialId])
 
   useEffect(() => {
     if (!open) return
@@ -48,10 +51,11 @@ export function MissingCredentialModal({ open, credentialId, jobName, index, tot
     return () => window.removeEventListener('keydown', handler)
   }, [open, onSkipAll])
 
-  const filled =
+  const valueFilled =
     (credType === 'secret_text'       && secretValue.trim() !== '') ||
     (credType === 'username_password' && username.trim() !== '' && password.trim() !== '') ||
     (credType === 'ssh_key'           && sshUsername.trim() !== '' && privateKey.trim() !== '')
+  const filled = credId.trim() !== '' && valueFilled
 
   function handleConfigure() {
     const fields: CredentialFields = {
@@ -62,7 +66,7 @@ export function MissingCredentialModal({ open, credentialId, jobName, index, tot
       ssh_username:    credType === 'ssh_key'           ? sshUsername  : undefined,
       private_key:     credType === 'ssh_key'           ? privateKey   : undefined,
     }
-    onDone(credentialId, fields)
+    onDone(credId.trim(), fields)
   }
 
   return (
@@ -113,10 +117,24 @@ export function MissingCredentialModal({ open, credentialId, jobName, index, tot
 
               {/* Body */}
               <div className="px-5 py-5 space-y-4 overflow-y-auto max-h-[60vh]">
-                {/* Credential ID display */}
-                <div className="rounded-xl border border-[rgba(46,109,160,0.12)] bg-[#f0f6fb] px-4 py-3">
-                  <p className="text-[10px] font-mono text-text-dim uppercase tracking-[0.1em] mb-1">Credential ID</p>
-                  <p className="text-[13px] font-mono font-semibold text-text-primary">{credentialId}</p>
+                {/* Credential ID — editable */}
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em]">
+                    Credential ID
+                    {pending.placeholder && (
+                      <span className="ml-2 normal-case text-[10px] text-text-dim font-normal">
+                        (referenced as <span className="font-mono">{pending.placeholder}</span> in Jenkinsfile)
+                      </span>
+                    )}
+                  </p>
+                  <input
+                    type="text"
+                    value={credId}
+                    onChange={e => setCredId(e.target.value)}
+                    placeholder="e.g. dockerhub-credentials"
+                    className="w-full h-9 rounded-lg border border-[rgba(46,109,160,0.2)] bg-white px-3 text-[13px] font-mono text-text-primary placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-[#2e6da0]/30 focus:border-[#2e6da0]/50 transition"
+                  />
+                  <p className="text-[11px] text-text-dim">This ID must match what the Jenkinsfile references</p>
                 </div>
 
                 {/* Type pill-tabs */}
@@ -209,7 +227,7 @@ export function MissingCredentialModal({ open, credentialId, jobName, index, tot
               {/* Footer */}
               <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-[rgba(46,109,160,0.1)] bg-[#f9fbfd]">
                 <button
-                  onClick={() => onDone(credentialId, null)}
+                  onClick={() => onDone(credId.trim() || pending.credentialId, null)}
                   className="h-9 px-5 rounded-xl text-[13px] font-semibold font-sans border border-[rgba(46,109,160,0.18)] text-text-muted bg-white hover:bg-overlay/60 hover:text-text-base transition-all duration-150 cursor-pointer"
                 >
                   Skip this one

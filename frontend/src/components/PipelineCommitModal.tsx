@@ -4,10 +4,18 @@ import { X, GitBranch, ChevronRight, CheckCircle2, AlertTriangle, Loader2 } from
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-// Detect only explicit YOUR_* placeholders — avoids false positives on Jenkins/Groovy built-ins
+const _CRED_KEYWORDS = /CRED|SECRET|KEY|TOKEN|PASS|SSH|CERT|AUTH/i
+
+// Detect YOUR_* placeholders that are NOT credential IDs — those go to MissingCredentialModal
 function detectPlaceholders(code: string): string[] {
   const matches = code.match(/\bYOUR_[A-Z][A-Z0-9_]*\b/g) ?? []
-  return [...new Set(matches)]
+  return [...new Set(matches)].filter(p => !_CRED_KEYWORDS.test(p))
+}
+
+// Detect YOUR_* placeholders that ARE credential IDs — returned to parent after commit
+function detectCredPlaceholders(code: string): string[] {
+  const matches = code.match(/\bYOUR_[A-Z][A-Z0-9_]*\b/g) ?? []
+  return [...new Set(matches)].filter(p => _CRED_KEYWORDS.test(p))
 }
 
 function substituteValues(code: string, values: Record<string, string>): string {
@@ -23,12 +31,17 @@ type Step =
   | { kind: 'jobname' }
   | { kind: 'review'; finalCode: string }
 
+export interface PendingCredential {
+  credentialId: string   // actual ID to create in Jenkins (editable by user)
+  placeholder?: string   // YOUR_* key it came from, shown as hint
+}
+
 interface Props {
   open: boolean
   pipeline: string
   platform: 'jenkins' | 'github'
   description: string
-  onCommitted: (missingCredentials: string[]) => void
+  onCommitted: (pendingCredentials: PendingCredential[]) => void
   onCancel: () => void
 }
 
@@ -95,7 +108,19 @@ export function PipelineCommitModal({ open, pipeline, platform, description, onC
       })
       const data = await res.json()
       if (data.success) {
-        onCommitted(data.missing_credentials ?? [])
+        // Credential placeholders left unsubstituted (YOUR_SSH_CREDS etc) become pending creds
+        // with a suggested ID derived from the placeholder name.
+        const credPlaceholders = detectCredPlaceholders(pipeline)
+        const fromPlaceholders: PendingCredential[] = credPlaceholders.map(p => ({
+          credentialId: p.replace(/^YOUR_/, '').toLowerCase().replace(/_/g, '-'),
+          placeholder: p,
+        }))
+        // Backend-detected missing creds (already existing IDs that don't exist in Jenkins)
+        const fromBackend: PendingCredential[] = (data.missing_credentials ?? [] as string[])
+          .filter((id: string) => !fromPlaceholders.some(p => p.credentialId === id))
+          .map((id: string) => ({ credentialId: id }))
+        const pending = [...fromPlaceholders, ...fromBackend]
+        onCommitted(pending)
       } else {
         setError(data.detail ?? 'Commit failed')
       }
