@@ -234,6 +234,51 @@ class TestCredentialExtractor:
         assert 'dockerhub-credentials' in ids
         assert 'ssh-server-credentials' in ids
 
+    def test_env_block_cred_variable_assignment(self):
+        jf = """
+        environment {
+            DOCKERHUB_CREDS = 'my-dockerhub-id'
+            SSH_CREDS       = 'my-ssh-key-id'
+            IMAGE_NAME      = 'myapp'
+        }
+        """
+        ids = extract_credential_ids(jf)
+        assert 'my-dockerhub-id' in ids
+        assert 'my-ssh-key-id' in ids
+        assert 'myapp' not in ids  # IMAGE_NAME has no cred keyword
+
+    def test_docker_with_registry(self):
+        jf = "docker.withRegistry('https://registry.hub.docker.com', 'dockerhub-creds') {}"
+        assert extract_credential_ids(jf) == ['dockerhub-creds']
+
+    def test_llm_variable_pattern(self):
+        # Exact shape the LLM generated: env vars used as variable refs in sshagent/docker
+        jf = """
+        environment {
+            DOCKERHUB_CREDS = 'psddsfds'
+            SSH_CREDS       = 'ewrewrwef'
+            IMAGE_NAME      = 'werewr'
+        }
+        stages {
+            stage('Push') {
+                steps {
+                    script {
+                        docker.withRegistry('https://registry.hub.docker.com', DOCKERHUB_CREDS) {}
+                    }
+                }
+            }
+            stage('Deploy') {
+                steps {
+                    sshagent(credentials: [SSH_CREDS]) { sh 'ssh ...' }
+                }
+            }
+        }
+        """
+        ids = extract_credential_ids(jf)
+        assert 'psddsfds' in ids
+        assert 'ewrewrwef' in ids
+        assert 'werewr' not in ids
+
 
 # ---------------------------------------------------------------------------
 # Credential checker tests
