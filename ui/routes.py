@@ -562,9 +562,11 @@ async def commit_pipeline(payload: CommitPayload):
                 None, create_job, job_name, payload.content, payload.description
             )
             cred_ids = extract_credential_ids(payload.content)
+            logger.info("commit_pipeline: extracted cred_ids=%s from job %s", cred_ids, job_name)
             missing = await asyncio.get_event_loop().run_in_executor(
                 None, get_missing_credentials, cred_ids
             )
+            logger.info("commit_pipeline: missing_credentials=%s for job %s", missing, job_name)
             return {
                 "success": True,
                 "job_name": job_name,
