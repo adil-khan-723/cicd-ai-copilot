@@ -277,29 +277,32 @@ function PlaceholderStep({ stepKey, index, total, value, onChange, onNext, input
   value: string; onChange: (v: string) => void
   onNext: () => void; inputRef: React.RefObject<HTMLInputElement>
 }) {
-  const label = stepKey.replace(/^YOUR_/, '').replace(/_/g, ' ').toLowerCase()
-    .replace(/\b\w/g, c => c.toUpperCase())
+  const meta = getPlaceholderMeta(stepKey)
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="text-[10px] font-mono font-semibold text-[#2e6da0] uppercase tracking-[0.12em]">
-          Variable {index + 1} of {total}
-        </span>
-      </div>
+      <span className="text-[10px] font-mono font-semibold text-[#2e6da0] uppercase tracking-[0.12em]">
+        Variable {index + 1} of {total}
+      </span>
+
       <div className="rounded-xl border border-[rgba(46,109,160,0.12)] bg-[#f0f6fb] px-4 py-3.5 space-y-1">
-        <p className="text-[10px] font-mono text-text-dim uppercase tracking-[0.1em]">Placeholder</p>
-        <p className="text-[13px] font-mono font-semibold text-text-primary">{stepKey}</p>
+        <p className="text-[10px] font-mono text-text-dim uppercase tracking-[0.1em]">
+          {meta.category}
+        </p>
+        <p className="text-[14px] font-semibold text-text-primary">{meta.label}</p>
+        {meta.description && (
+          <p className="text-[11px] text-text-dim">{meta.description}</p>
+        )}
       </div>
+
       <div className="space-y-1.5">
-        <label className="text-[12px] font-semibold text-text-muted">Enter value for {label}</label>
         <input
           ref={inputRef}
-          type="text"
+          type={meta.inputType}
           value={value}
           onChange={e => onChange(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') onNext() }}
-          placeholder={`e.g. ${getPlaceholderHint(stepKey)}`}
+          placeholder={meta.hint}
           className="w-full h-9 rounded-lg border border-[rgba(46,109,160,0.2)] bg-white px-3 text-[13px] font-mono text-text-primary placeholder:text-text-dim focus:outline-none focus:ring-2 focus:ring-[#2e6da0]/30 focus:border-[#2e6da0]/50 transition"
         />
         <p className="text-[11px] text-text-dim">Press Enter or click Next to continue</p>
@@ -373,15 +376,50 @@ function ReviewStep({ code, jobName, error }: { code: string; jobName: string; e
   )
 }
 
-function getPlaceholderHint(key: string): string {
-  const hints: Record<string, string> = {
-    YOUR_ECR_REPO:    '123456789.dkr.ecr.us-east-1.amazonaws.com/my-app',
-    YOUR_AWS_REGION:  'us-east-1',
-    YOUR_DOCKER_IMAGE:'node:18-alpine',
-    YOUR_REGISTRY:    'registry.example.com',
-    YOUR_IMAGE_NAME:  'my-app',
-    YOUR_REPO_URL:    'https://github.com/org/repo.git',
-    YOUR_BRANCH:      'main',
-  }
-  return hints[key] ?? 'your-value'
+interface PlaceholderMeta {
+  label: string
+  category: string
+  description?: string
+  hint: string
+  inputType: 'text' | 'url' | 'number'
+}
+
+const _PLACEHOLDER_MAP: Record<string, PlaceholderMeta> = {
+  // Source control
+  YOUR_REPO_URL:               { label: 'GitHub Repository URL',      category: 'Source Control', description: 'Full HTTPS clone URL of your repository', hint: 'https://github.com/org/repo.git', inputType: 'url' },
+  YOUR_BRANCH:                 { label: 'Branch to build',            category: 'Source Control', hint: 'main', inputType: 'text' },
+  YOUR_GIT_BRANCH:             { label: 'Branch to build',            category: 'Source Control', hint: 'main', inputType: 'text' },
+
+  // Docker / registry
+  YOUR_DOCKERHUB_USERNAME:     { label: 'DockerHub Username',         category: 'Docker', hint: 'myusername', inputType: 'text' },
+  YOUR_DOCKERHUB_IMAGE_NAME:   { label: 'Docker Image Name',          category: 'Docker', hint: 'my-app', inputType: 'text' },
+  YOUR_IMAGE_NAME:             { label: 'Docker Image Name',          category: 'Docker', hint: 'my-app', inputType: 'text' },
+  YOUR_DOCKER_IMAGE:           { label: 'Docker Base Image',          category: 'Docker', hint: 'node:18-alpine', inputType: 'text' },
+  YOUR_REGISTRY:               { label: 'Container Registry URL',     category: 'Docker', hint: 'registry.example.com', inputType: 'text' },
+  YOUR_ECR_REPO:               { label: 'AWS ECR Repository URI',     category: 'AWS', hint: '123456789.dkr.ecr.us-east-1.amazonaws.com/my-app', inputType: 'text' },
+
+  // AWS
+  YOUR_AWS_REGION:             { label: 'AWS Region',                 category: 'AWS', hint: 'us-east-1', inputType: 'text' },
+  YOUR_AWS_ACCOUNT_ID:         { label: 'AWS Account ID',             category: 'AWS', hint: '123456789012', inputType: 'text' },
+
+  // Remote server / SSH
+  YOUR_REMOTE_SERVER_IP:       { label: 'Remote Server IP',           category: 'Deployment', hint: '192.168.1.100', inputType: 'text' },
+  YOUR_SERVER_IP:              { label: 'Remote Server IP',           category: 'Deployment', hint: '192.168.1.100', inputType: 'text' },
+  YOUR_REMOTE_SERVER_USERNAME: { label: 'SSH Login Username',         category: 'Deployment', hint: 'ubuntu', inputType: 'text' },
+  YOUR_SSH_USER:               { label: 'SSH Login Username',         category: 'Deployment', hint: 'ubuntu', inputType: 'text' },
+  YOUR_REMOTE_DEPLOY_PATH:     { label: 'Deployment Directory',       category: 'Deployment', description: 'Absolute path on the remote server', hint: '/opt/myapp', inputType: 'text' },
+  YOUR_DEPLOY_PATH:            { label: 'Deployment Directory',       category: 'Deployment', hint: '/opt/myapp', inputType: 'text' },
+
+  // App config
+  YOUR_CONTAINER_NAME:         { label: 'Docker Container Name',      category: 'App Config', hint: 'my-app-container', inputType: 'text' },
+  YOUR_APP_NAME:               { label: 'Application Name',           category: 'App Config', hint: 'my-app', inputType: 'text' },
+  YOUR_APP_PORT:               { label: 'Application Port',           category: 'App Config', hint: '8080', inputType: 'number' },
+}
+
+function getPlaceholderMeta(key: string): PlaceholderMeta {
+  if (_PLACEHOLDER_MAP[key]) return _PLACEHOLDER_MAP[key]
+  // Generic fallback: derive readable label from key
+  const raw = key.replace(/^YOUR_/, '').replace(/_/g, ' ').toLowerCase()
+  const label = raw.replace(/\b\w/g, c => c.toUpperCase())
+  return { label, category: 'Configuration', hint: 'your-value', inputType: 'text' }
 }
