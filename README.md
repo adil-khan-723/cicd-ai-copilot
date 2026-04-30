@@ -306,6 +306,44 @@ GENERATION_MODEL=qwen2.5-coder:32b
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    JK["Jenkins"]
+    WH["webhook/\nFastAPI server"]
+    PP["parser/\nStage isolator + log cleaner"]
+    VC["verification/\nJenkins API crawler"]
+    CB["analyzer/\nContext builder"]
+    LLM["LLM\nHaiku · Llama 3.1"]
+    AG["agent/\nFix executor"]
+    UI["React Web UI"]
+    CP["copilot/\nPipeline generator"]
+    LLM2["LLM\nSonnet · Qwen2.5-Coder"]
+
+    JK -->|"failure webhook"| WH
+    WH -->|"failed stage log"| PP
+    PP -->|"cleaned log ~300tok"| CB
+    PP -->|"stage source ~150tok"| CB
+    WH -->|"Jenkinsfile + job name"| VC
+    VC -->|"verified facts ~200tok"| CB
+    CB -->|"~1000 token context"| LLM
+    LLM -->|"JSON: root_cause, fix_type, confidence"| AG
+    AG -->|"SSE: analysis_complete"| UI
+    UI -->|"approve fix"| AG
+    AG -->|"execute fix"| JK
+    AG -->|"SSE: fix_result"| UI
+
+    UI -->|"generate request"| CP
+    CP -->|"template + NL"| LLM2
+    LLM2 -->|"Jenkinsfile"| CP
+    CP -->|"preview + commit"| UI
+    CP -->|"create job"| JK
+
+    style LLM fill:#d4a27f,color:#000
+    style LLM2 fill:#d4a27f,color:#000
+    style UI fill:#61dafb,color:#000
+    style JK fill:#335061,color:#fff
+```
+
 ### Module map
 
 | Module | What it does | Uses LLM? | Key file |
