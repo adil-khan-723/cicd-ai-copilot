@@ -28,6 +28,8 @@ Rules:
   use SCREAMING_SNAKE_CASE placeholders prefixed with YOUR_. Examples:
   YOUR_DOCKERHUB_USERNAME, YOUR_SERVER_IP, YOUR_APP_NAME, YOUR_ECR_REPO.
   Never use lowercase kebab placeholders like your-server-ip.
+- Never use 'checkout scm' — it only works in Multibranch Pipelines. Always use:
+  git(url: 'YOUR_REPO_URL', branch: 'YOUR_BRANCH', credentialsId: 'YOUR_GIT_CREDENTIALS_ID')
 """
 
 
