@@ -24,6 +24,10 @@ Rules:
 - Use withCredentials() for any secrets — never hardcode values.
 - Add post { failure { } } blocks for important stages.
 - The output must be valid Groovy that Jenkins would accept.
+- For any value the user must supply (server IPs, image names, registry URLs, usernames, paths),
+  use SCREAMING_SNAKE_CASE placeholders prefixed with YOUR_. Examples:
+  YOUR_DOCKERHUB_USERNAME, YOUR_SERVER_IP, YOUR_APP_NAME, YOUR_ECR_REPO.
+  Never use lowercase kebab placeholders like your-server-ip.
 """
 
 

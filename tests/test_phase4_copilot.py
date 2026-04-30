@@ -207,6 +207,33 @@ class TestCredentialExtractor:
         jf = "withCredentials([string(credentialsId: env.DYNAMIC_CRED, variable: 'X')]) {}"
         assert extract_credential_ids(jf) == []
 
+    def test_environment_block_shorthand(self):
+        jf = "environment { DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials') }"
+        assert extract_credential_ids(jf) == ['dockerhub-credentials']
+
+    def test_sshagent_plugin(self):
+        jf = "sshagent(credentials: ['ssh-server-credentials']) { sh 'ssh ...' }"
+        assert extract_credential_ids(jf) == ['ssh-server-credentials']
+
+    def test_real_pipeline_extracts_both_creds(self):
+        jf = """
+        environment {
+            DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+        }
+        stages {
+            stage('Deploy') {
+                steps {
+                    sshagent(credentials: ['ssh-server-credentials']) {
+                        sh 'ssh deploy@server'
+                    }
+                }
+            }
+        }
+        """
+        ids = extract_credential_ids(jf)
+        assert 'dockerhub-credentials' in ids
+        assert 'ssh-server-credentials' in ids
+
 
 # ---------------------------------------------------------------------------
 # Credential checker tests
