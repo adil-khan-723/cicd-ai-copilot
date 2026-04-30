@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   X, ShieldAlert, Wrench, RefreshCw, Trash2, Clock,
   KeyRound, AlertTriangle, CheckCircle2, ChevronRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { AnalysisCompleteEvent } from '@/types'
+import type { AnalysisCompleteEvent, CredentialFields } from '@/types'
 
 // ── fix type metadata ────────────────────────────────────────────────────────
 
@@ -91,13 +91,41 @@ interface Props {
   analysis: AnalysisCompleteEvent
   jobName: string
   buildNumber: string | number
-  onAccept: () => void
+  onAccept: (credFields?: CredentialFields | null) => void
   onCancel: () => void
 }
 
 export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, onCancel }: Props) {
   const meta = FIX_META[analysis.fix_type] ?? DEFAULT_META
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  const isCredential = analysis.fix_type === 'configure_credential'
+
+  const typeFromLLM = (analysis.credential_type ?? 'secret_text') as 'secret_text' | 'username_password' | 'ssh_key'
+  const [credType,    setCredType]    = useState<'secret_text' | 'username_password' | 'ssh_key'>(typeFromLLM)
+  const [secretValue, setSecretValue] = useState('')
+  const [username,    setUsername]    = useState('')
+  const [password,    setPassword]    = useState('')
+  const [sshUsername, setSshUsername] = useState('')
+  const [privateKey,  setPrivateKey]  = useState('')
+
+  // reset fields when modal opens
+  useEffect(() => {
+    if (open) {
+      setCredType(typeFromLLM)
+      setSecretValue('')
+      setUsername('')
+      setPassword('')
+      setSshUsername('')
+      setPrivateKey('')
+    }
+  }, [open])
+
+  const credFieldsFilled =
+    !isCredential ||
+    (credType === 'secret_text'       && secretValue.trim() !== '') ||
+    (credType === 'username_password' && username.trim() !== '' && password.trim() !== '') ||
+    (credType === 'ssh_key'           && sshUsername.trim() !== '' && privateKey.trim() !== '')
 
   // close on Escape
   useEffect(() => {
@@ -238,6 +266,107 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                   </ol>
                 </div>
 
+                {/* Credential value section */}
+                {isCredential && (
+                  <div className="rounded-xl border border-[rgba(46,109,160,0.18)] bg-[#f5f9ff] px-4 py-3.5 space-y-3">
+                    <p className="text-[10px] font-mono font-semibold text-[#2e6da0] uppercase tracking-[0.12em]">
+                      Provide Credential Value
+                    </p>
+
+                    {/* Pill tabs */}
+                    <div className="flex gap-2">
+                      {(['secret_text', 'username_password', 'ssh_key'] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setCredType(t)}
+                          className={cn(
+                            'flex-1 py-1.5 rounded-lg text-[11px] font-semibold border transition-all duration-150 cursor-pointer',
+                            credType === t
+                              ? 'bg-[#2e6da0] border-[#2e6da0] text-white'
+                              : 'bg-white border-[rgba(46,109,160,0.25)] text-[#2e6da0] hover:bg-[#dbeafe]',
+                          )}
+                        >
+                          {t === 'secret_text' ? 'Secret Text' : t === 'username_password' ? 'User / Pass' : 'SSH Key'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Conditional fields */}
+                    {credType === 'secret_text' && (
+                      <div>
+                        <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Secret value</label>
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          placeholder="Paste secret value…"
+                          value={secretValue}
+                          onChange={e => setSecretValue(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-[rgba(46,109,160,0.25)] text-[13px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                        />
+                      </div>
+                    )}
+
+                    {credType === 'username_password' && (
+                      <div className="space-y-2">
+                        <div>
+                          <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Username</label>
+                          <input
+                            type="text"
+                            autoComplete="off"
+                            placeholder="Username"
+                            value={username}
+                            onChange={e => setUsername(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-[rgba(46,109,160,0.25)] text-[13px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Password</label>
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            placeholder="Password"
+                            value={password}
+                            onChange={e => setPassword(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-[rgba(46,109,160,0.25)] text-[13px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {credType === 'ssh_key' && (
+                      <div className="space-y-2">
+                        <div>
+                          <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">SSH Username</label>
+                          <input
+                            type="text"
+                            autoComplete="off"
+                            placeholder="git"
+                            value={sshUsername}
+                            onChange={e => setSshUsername(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-[rgba(46,109,160,0.25)] text-[13px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Private key (PEM)</label>
+                          <textarea
+                            autoComplete="off"
+                            placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----"}
+                            value={privateKey}
+                            onChange={e => setPrivateKey(e.target.value)}
+                            rows={4}
+                            className="w-full px-3 py-2 rounded-lg border border-[rgba(46,109,160,0.25)] text-[12px] font-mono bg-white focus:outline-none focus:border-[#2e6da0] resize-y"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-[11px] text-text-dim italic">
+                      Value goes direct to Jenkins — never stored or logged
+                    </p>
+                  </div>
+                )}
+
                 {/* Confidence + fix_suggestion */}
                 <div className="flex items-center justify-between gap-3 pt-1">
                   <div className="flex items-center gap-2">
@@ -263,30 +392,59 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
 
               {/* Footer */}
               <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-[rgba(180,100,80,0.1)] bg-[#fffcfa]">
-                <button
-                  onClick={onCancel}
-                  className={cn(
-                    'h-9 px-5 rounded-xl text-[13px] font-semibold font-sans',
-                    'border border-[rgba(180,100,80,0.18)] text-text-muted bg-white',
-                    'hover:bg-overlay/60 hover:text-text-base hover:border-[rgba(180,100,80,0.28)]',
-                    'transition-all duration-150 cursor-pointer',
-                  )}
-                >
-                  Cancel
-                </button>
+                {isCredential ? (
+                  <button
+                    onClick={() => onAccept(null)}
+                    className={cn(
+                      'h-9 px-4 rounded-xl text-[12px] font-semibold font-sans',
+                      'border border-[rgba(46,109,160,0.25)] text-[#2e6da0] bg-white',
+                      'hover:bg-[#dbeafe] transition-all duration-150 cursor-pointer',
+                    )}
+                  >
+                    I'll configure it myself
+                  </button>
+                ) : (
+                  <button
+                    onClick={onCancel}
+                    className={cn(
+                      'h-9 px-5 rounded-xl text-[13px] font-semibold font-sans',
+                      'border border-[rgba(180,100,80,0.18)] text-text-muted bg-white',
+                      'hover:bg-overlay/60 hover:text-text-base hover:border-[rgba(180,100,80,0.28)]',
+                      'transition-all duration-150 cursor-pointer',
+                    )}
+                  >
+                    Cancel
+                  </button>
+                )}
 
                 <button
-                  onClick={onAccept}
+                  disabled={!credFieldsFilled}
+                  onClick={() => {
+                    if (isCredential) {
+                      onAccept({
+                        credential_type: credType,
+                        secret_value:    credType === 'secret_text'       ? secretValue  : undefined,
+                        username:        credType === 'username_password' ? username     : undefined,
+                        password:        credType === 'username_password' ? password     : undefined,
+                        ssh_username:    credType === 'ssh_key'           ? sshUsername  : undefined,
+                        private_key:     credType === 'ssh_key'           ? privateKey   : undefined,
+                      })
+                    } else {
+                      onAccept()
+                    }
+                  }}
+                  title={!credFieldsFilled ? 'Fill in credential fields first' : undefined}
                   className={cn(
                     'h-9 px-6 rounded-xl text-[13px] font-bold font-sans',
                     'flex items-center gap-2',
                     'text-white shadow-sm',
                     'transition-all duration-150 cursor-pointer active:scale-[0.98]',
+                    'disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100',
                     getAcceptBtnClass(analysis.fix_type),
                   )}
                 >
                   {meta.icon}
-                  Accept & Apply Fix
+                  {isCredential ? 'Configure & Apply' : 'Accept & Apply Fix'}
                 </button>
               </div>
             </div>
