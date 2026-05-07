@@ -594,6 +594,14 @@ class InjectWebhookPayload(BaseModel):
     job_name: str
 
 
+@router.post("/api/feed/clear")
+async def clear_feed():
+    """Wipe SSE history so browsers reconnecting won't replay old build events."""
+    from ui.event_bus import bus
+    bus.clear_history()
+    return {"ok": True}
+
+
 @router.post("/api/inject-webhook")
 async def inject_webhook(payload: InjectWebhookPayload):
     result = await asyncio.get_event_loop().run_in_executor(
