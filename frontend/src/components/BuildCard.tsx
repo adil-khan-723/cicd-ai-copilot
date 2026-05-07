@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
 import { ApplyFixModal } from './ApplyFixModal'
 import { PotentialIssuesCard } from './PotentialIssuesCard'
-import { MissingCredentialModal } from './MissingCredentialModal'
 import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType, CredentialFields } from '@/types'
 
@@ -95,7 +94,6 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
     jenkinsUrl: string
   } | null>(null)
   const [relatedExpanded, setRelatedExpanded] = useState(false)
-  const [pendingPotentialCred, setPendingPotentialCred] = useState<{ credentialId: string; idx: number } | null>(null)
 
   const { analysis, fixResult, steps, dismissed } = card
   const isRunning  = !analysis && steps.some(s => s.status === 'running')
@@ -103,12 +101,17 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
   const canAutoFix = analysis && !DIAGNOSTIC_TYPES.has(analysis.fix_type) &&
                      analysis.confidence >= CONFIDENCE_THRESHOLD && !fixResult && isLatestFailing
 
-  async function applyFix(credFields?: CredentialFields | null, resolvedCorrectStep?: string) {
+  async function applyFix(
+    credFields?: CredentialFields | null,
+    resolvedCorrectStep?: string,
+    selectedPotentials?: import('./ApplyFixModal').SelectedPotential[],
+  ) {
     if (!analysis) return
     setModalOpen(false)
     setFixing(true)
 
     const isSelfConfigure = analysis.fix_type === 'configure_credential' && credFields === null
+    const hasSelectedPotentials = (selectedPotentials?.length ?? 0) > 0
 
     try {
       const body: Record<string, string | undefined> = {
@@ -116,6 +119,9 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
         job_name:     card.job,
         build_number: String(card.build),
       }
+
+      // Defer retrigger until last fix when batching
+      if (hasSelectedPotentials) body.skip_retrigger = 'true'
 
       if (analysis.fix_type === 'configure_tool' && analysis.verification?.mismatched_tools?.[0]) {
         const m = analysis.verification.mismatched_tools[0]
@@ -140,7 +146,6 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
 
       if (analysis.fix_type === 'fix_step_typo' || analysis.fix_type === 'increase_timeout') {
         if (analysis.bad_step) body.bad_step = analysis.bad_step
-        // Use resolved (placeholder-substituted) version if provided, else LLM original
         body.correct_step = resolvedCorrectStep ?? analysis.correct_step
       }
 
@@ -155,6 +160,15 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
         body:    JSON.stringify(body),
       })
 
+      if (hasSelectedPotentials) {
+        const list = selectedPotentials!
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i]
+          const isLast = i === list.length - 1
+          await dispatchPotentialFixSilent(item.issue, item.credFields ?? null, !isLast)
+        }
+      }
+
       if (isSelfConfigure && analysis.verification?.missing_credentials?.[0]) {
         const settings = await fetch('/api/settings').then(r => r.json()).catch(() => ({}))
         setPendingCredRetrigger({
@@ -165,19 +179,17 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
     } finally { setFixing(false) }
   }
 
-  async function dispatchPotentialFix(issue: import('@/types').PotentialIssue, idx: number): Promise<{ ok: boolean; error?: string }> {
-    if (issue.fix_type === 'configure_credential') {
-      const credId = issue.credential_id ?? ''
-      if (!credId) return { ok: false, error: 'No credential ID' }
-      setPendingPotentialCred({ credentialId: credId, idx })
-      return { ok: true }
-    }
-
+  async function dispatchPotentialFixSilent(
+    issue: import('@/types').PotentialIssue,
+    credFields: import('@/types').CredentialFields | null,
+    skipRetrigger: boolean,
+  ): Promise<void> {
     const body: Record<string, string> = {
       fix_type: issue.fix_type,
       job_name: card.job,
       build_number: String(card.build),
     }
+    if (skipRetrigger) body.skip_retrigger = 'true'
 
     if (issue.fix_type === 'configure_tool') {
       const ref = issue.tool_ref ?? ''
@@ -190,43 +202,24 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
       }
     }
 
+    if (issue.fix_type === 'configure_credential' && credFields) {
+      body.credential_id   = issue.credential_id ?? ''
+      body.credential_type = credFields.credential_type
+      if (credFields.secret_value) body.secret_value = credFields.secret_value
+      if (credFields.username)     body.username     = credFields.username
+      if (credFields.password)     body.password     = credFields.password
+      if (credFields.ssh_username) body.ssh_username = credFields.ssh_username
+      if (credFields.private_key)  body.private_key  = credFields.private_key
+    }
+
     if (issue.fix_type === 'fix_step_typo') {
       body.bad_step = issue.line
     }
 
-    try {
-      const res = await fetch('/api/fix', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) return { ok: true }
-      const data = await res.json().catch(() => ({}))
-      return { ok: false, error: data.detail ?? `HTTP ${res.status}` }
-    } catch {
-      return { ok: false, error: 'Network error' }
-    }
-  }
-
-  async function submitPotentialCred(credentialId: string, credFields: import('@/types').CredentialFields | null) {
-    setPendingPotentialCred(null)
-    if (!credFields) return
     await fetch('/api/fix', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fix_type: 'configure_credential',
-        job_name: card.job,
-        build_number: String(card.build),
-        credential_id: credentialId,
-        credential_type: credFields.credential_type,
-        secret_value: credFields.secret_value,
-        username: credFields.username,
-        password: credFields.password,
-        ssh_username: credFields.ssh_username,
-        private_key: credFields.private_key,
-        skip_retrigger: 'true',
-      }),
+      body: JSON.stringify(body),
     })
   }
 
@@ -446,24 +439,9 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
                 </span>
               </button>
               {relatedExpanded && (
-                <PotentialIssuesCard
-                  issues={analysis.potential_issues}
-                  onFixIssue={dispatchPotentialFix}
-                />
+                <PotentialIssuesCard issues={analysis.potential_issues} />
               )}
             </>
-          )}
-
-          {pendingPotentialCred && (
-            <MissingCredentialModal
-              open={true}
-              pending={{ credentialId: pendingPotentialCred.credentialId }}
-              jobName={card.job}
-              index={1}
-              total={1}
-              onDone={(id, fields) => submitPotentialCred(id, fields)}
-              onSkipAll={() => setPendingPotentialCred(null)}
-            />
           )}
 
                 {/* Pending credential retrigger banner */}

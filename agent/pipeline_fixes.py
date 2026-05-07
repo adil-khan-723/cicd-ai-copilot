@@ -257,6 +257,7 @@ def configure_tool(
     build_number: str = "0",
     referenced_name: str = "",
     configured_name: str = "",
+    skip_retrigger: bool = False,
 ) -> FixResult:
     """
     Patch the Jenkinsfile in the job's config XML: replace every occurrence of
@@ -304,13 +305,15 @@ def configure_tool(
         new_config_xml = "<?xml version='1.1' encoding='UTF-8'?>\n" + new_config_xml
 
         server.reconfig_job(job_name, new_config_xml)
-        server.build_job(job_name)
-        logger.info("configure_tool: patched %s: '%s' → '%s' (%d occurrence(s)), retriggered",
-                    job_name, referenced_name, configured_name, count)
+        if not skip_retrigger:
+            server.build_job(job_name)
+        logger.info("configure_tool: patched %s: '%s' → '%s' (%d occurrence(s)), retriggered=%s",
+                    job_name, referenced_name, configured_name, count, not skip_retrigger)
+        retrig_note = "Job re-configured and retriggered." if not skip_retrigger else "Job re-configured (retrigger deferred)."
         return FixResult(
             success=True,
             fix_type="configure_tool",
-            detail=f"Jenkinsfile updated: '{referenced_name}' → '{configured_name}' ({count} occurrence(s)). Job re-configured and retriggered.",
+            detail=f"Jenkinsfile updated: '{referenced_name}' → '{configured_name}' ({count} occurrence(s)). {retrig_note}",
         )
     except jenkins.JenkinsException as e:
         logger.error("configure_tool failed for %s: %s", job_name, e)
@@ -324,6 +327,7 @@ def fix_step_typo(
     build_number: str = "0",
     bad_step: str = "",
     correct_step: str = "",
+    skip_retrigger: bool = False,
 ) -> FixResult:
     """
     Patch the Jenkinsfile stored in the job's config XML to fix ANY Groovy/Jenkins
@@ -423,15 +427,17 @@ def fix_step_typo(
         new_config_xml = "<?xml version='1.1' encoding='UTF-8'?>\n" + new_config_xml
 
         server.reconfig_job(job_name, new_config_xml)
-        server.build_job(job_name)
+        if not skip_retrigger:
+            server.build_job(job_name)
         logger.info(
-            "fix_step_typo: patched %s via %s — %r → %r, retriggered",
-            job_name, strategy_used, bad[:60], good[:60],
+            "fix_step_typo: patched %s via %s — %r → %r, retriggered=%s",
+            job_name, strategy_used, bad[:60], good[:60], not skip_retrigger,
         )
+        retrig_note = "Job reconfigured and retriggered." if not skip_retrigger else "Job reconfigured (retrigger deferred)."
         return FixResult(
             success=True,
             fix_type="fix_step_typo",
-            detail=f"Jenkinsfile patched ({strategy_used}). Job reconfigured and retriggered.",
+            detail=f"Jenkinsfile patched ({strategy_used}). {retrig_note}",
         )
     except jenkins.JenkinsException as e:
         logger.error("fix_step_typo failed for %s: %s", job_name, e)
