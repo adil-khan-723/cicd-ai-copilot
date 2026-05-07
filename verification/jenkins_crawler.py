@@ -67,6 +67,7 @@ def verify_jenkins_tools(
 
     try:
         with httpx.Client(auth=auth, timeout=timeout) as client:
+            _attach_crumb(client, jenkins_url)
             configured_tools = _fetch_configured_tools(client, jenkins_url)
             tool_install_details = _fetch_tool_install_details(client, jenkins_url)
             installed_plugins = _fetch_installed_plugins(client, jenkins_url)
@@ -150,6 +151,73 @@ def _parse_credentials(content: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Jenkins API fetchers
 # ---------------------------------------------------------------------------
+
+def credential_exists(
+    cred_id: str,
+    jenkins_url: str,
+    auth: tuple[str, str] | None = None,
+    timeout: float = 5.0,
+) -> bool | None:
+    """
+    Live check: does this credential ID exist in Jenkins global store?
+    Returns True/False on success, None if Jenkins unreachable / call failed.
+    """
+    if not cred_id or not jenkins_url:
+        return None
+    url = f"{jenkins_url.rstrip('/')}/credentials/store/system/domain/_/api/json?depth=1"
+    try:
+        with httpx.Client(auth=auth, timeout=timeout) as client:
+            resp = client.get(url)
+            if resp.status_code != 200:
+                return None
+            ids = {c.get("id", "") for c in resp.json().get("credentials", [])}
+            return cred_id in ids
+    except Exception:
+        return None
+
+
+def tool_exists(
+    tool_name: str,
+    jenkins_url: str,
+    auth: tuple[str, str] | None = None,
+    timeout: float = 5.0,
+) -> bool | None:
+    """
+    Live check: does this tool name exist in Jenkins Global Tool Configuration?
+    Returns True/False on success, None if call failed.
+    """
+    if not tool_name or not jenkins_url:
+        return None
+    try:
+        with httpx.Client(auth=auth, timeout=timeout) as client:
+            _attach_crumb(client, jenkins_url)
+            tools_by_type = _fetch_configured_tools(client, jenkins_url)
+        all_names = {n for names in tools_by_type.values() for n in names}
+        if not all_names:
+            return None
+        return tool_name in all_names
+    except Exception:
+        return None
+
+
+def _attach_crumb(client: httpx.Client, jenkins_url: str) -> None:
+    """
+    Fetch Jenkins CSRF crumb and add it as a default header on the client.
+    Required for POST /scriptText. Silent if Jenkins has CSRF disabled or auth fails.
+    """
+    url = f"{jenkins_url.rstrip('/')}/crumbIssuer/api/json"
+    try:
+        resp = client.get(url)
+        if resp.status_code != 200:
+            return
+        data = resp.json()
+        field = data.get("crumbRequestField")
+        crumb = data.get("crumb")
+        if field and crumb:
+            client.headers[field] = crumb
+    except Exception:
+        pass
+
 
 def _fetch_configured_tools(client: httpx.Client, jenkins_url: str) -> dict[str, list[str]]:
     """

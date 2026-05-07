@@ -187,6 +187,24 @@ class TestSystemPromptPotentialIssues:
         assert "logic" in prompt
         assert "config" in prompt
 
+    def test_system_prompt_has_concrete_exemplar(self):
+        """Prompt must show a worked example so the LLM populates potential_issues correctly."""
+        from analyzer.prompt_builder import build_system_prompt
+        prompt = build_system_prompt()
+        # Exemplar must show a populated potential_issues array (not just empty)
+        assert "EXAMPLE" in prompt
+        # Exemplar shows multiple entries
+        assert prompt.count('"fix_type": "configure_credential"') >= 1
+        assert prompt.count('"fix_type": "fix_step_typo"') >= 1
+
+    def test_system_prompt_forbids_merging_into_root_cause(self):
+        from analyzer.prompt_builder import build_system_prompt
+        prompt = build_system_prompt()
+        assert "root_cause" in prompt
+        # Stronger directive — explicit "do not merge"
+        lower = prompt.lower()
+        assert "must go in potential_issues" in lower or "must populate" in lower or "do not mention secondary issues only in prose" in lower
+
 
 class TestPotentialIssuesParsing:
     def test_parse_potential_issues_valid(self):

@@ -32,16 +32,54 @@ Response schema:
   ]
 }
 
-potential_issues rules:
-- Scan the ENTIRE Failing Stage Source for issues BEYOND the primary failure already described in root_cause
-- Do NOT repeat the primary failure (root_cause) as a potential issue
-- Each entry must reference an exact line from the Failing Stage Source — never fabricate lines
-- type=config: tool name, credential ID, or plugin reference that may not exist in Jenkins (configure_tool, configure_credential)
-- type=syntax: invalid DSL step, wrong method name, bad argument, Groovy syntax error (fix_step_typo)
-- type=logic: wrong image tag, wrong env var, bad shell command, incorrect branch name (pull_image or logic_error)
-- If no additional issues are found, return an empty array: "potential_issues": []
+potential_issues rules (CRITICAL — populate this array, do not merge findings into root_cause):
+- Scan the ENTIRE Failing Stage Source line by line for EVERY issue beyond the primary failure described in root_cause
+- root_cause must describe ONE issue — the primary failure that caused the build to fail. Every other issue you spot in the stage source MUST go in potential_issues, NOT in root_cause text.
+- If you see two or three issues in the stage source, you MUST emit two or three potential_issues entries. Do NOT mention secondary issues only in prose.
+- Each entry must reference an exact verbatim line from the Failing Stage Source — never fabricate lines.
+- type=config: tool name (configure_tool), credential ID (configure_credential), or plugin reference that may not exist in Jenkins
+- type=syntax: invalid DSL step, wrong method name, bad argument, Groovy syntax error, mistyped shell sub-command like 'mvn clen' (fix_step_typo)
+- type=logic: wrong image tag (pull_image), wrong env var, bad shell command, incorrect branch name (logic_error)
+- If genuinely no additional issues are found, return an empty array: "potential_issues": []
 - Maximum 5 entries — prioritize highest confidence findings
 - Do NOT include issues you are not reasonably confident about
+
+EXAMPLE — failing stage with three issues, primary is the tool mismatch:
+Failing Stage Source:
+  stage('Test & Deploy') {
+    steps {
+      script {
+        def mvnHome = tool name: 'Maven3', type: 'maven'
+        withCredentials([string(credentialsId: 'aws-prod-key', variable: 'AWS_KEY')]) {
+          sh "${mvnHome}/bin/mvn clen verify"
+        }
+      }
+    }
+  }
+Log: ERROR: No maven named Maven3 found
+
+Correct response:
+{
+  "root_cause": "The Maven tool 'Maven3' referenced in the stage does not exist in Jenkins Global Tool Configuration.",
+  "fix_suggestion": "Rename the tool reference to match the configured installation.",
+  "steps": ["Patch the tool name in the Jenkinsfile to match the configured tool", "Re-run the build"],
+  "confidence": 0.95,
+  "fix_type": "configure_tool",
+  "potential_issues": [
+    {
+      "type": "config",
+      "line": "withCredentials([string(credentialsId: 'aws-prod-key', variable: 'AWS_KEY')]) {",
+      "issue": "Credential 'aws-prod-key' may not exist in the Jenkins credentials store.",
+      "fix_type": "configure_credential"
+    },
+    {
+      "type": "syntax",
+      "line": "sh \"${mvnHome}/bin/mvn clen verify\"",
+      "issue": "Maven goal 'clen' is a typo — should be 'clean'.",
+      "fix_type": "fix_step_typo"
+    }
+  ]
+}
 
 steps rules:
 - 2 to 5 short steps maximum

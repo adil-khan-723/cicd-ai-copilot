@@ -488,8 +488,11 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         # LLM output is probabilistic. If the crawler found a mismatch/missing cred
         # and the LLM didn't pick it up, force the correct fix_type.
         # Skip when a compile error is present — syntax must be fixed first.
-        if not _has_compile_error:
-            if report.mismatched_tools and analysis.get("fix_type") != "configure_tool":
+        # Skip when LLM already picked a verified fix_type — secondary findings
+        # belong in potential_issues, not as a second override.
+        _llm_fix = analysis.get("fix_type")
+        if not _has_compile_error and _llm_fix not in ("configure_tool", "configure_credential"):
+            if report.mismatched_tools:
                 analysis["fix_type"] = "configure_tool"
                 analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.85)
                 if not analysis.get("fix_suggestion"):
@@ -498,7 +501,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
                         f"Rename tool reference from '{m.referenced}' to '{m.configured}' "
                         f"in the Jenkinsfile tools block."
                     )
-            elif report.missing_credentials and analysis.get("fix_type") != "configure_credential":
+            elif report.missing_credentials:
                 analysis["fix_type"] = "configure_credential"
                 analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.82)
                 if not analysis.get("fix_suggestion"):
@@ -548,12 +551,16 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         if analysis.get("fix_type") == "configure_tool" and report.mismatched_tools:
             primary_tool_ref = report.mismatched_tools[0].referenced
 
+        _settings = get_settings()
+        _jenkins_auth = (_settings.jenkins_user, _settings.jenkins_token) if _settings.jenkins_token else None
         filtered_potential_issues = _filter_potential_issues(
             analysis.get("potential_issues", []),
             report,
             primary_fix_type=analysis.get("fix_type", ""),
             primary_cred_id=primary_cred_id,
             primary_tool_ref=primary_tool_ref,
+            jenkins_url=_settings.jenkins_url or "",
+            jenkins_auth=_jenkins_auth,
         )
 
         # Determine step status: if no LLM was available, mark as failed so UI shows it clearly
@@ -724,24 +731,50 @@ def _run_verification(ctx, payload: dict) -> "VerificationReport":
     return report
 
 
+_TOOL_NAME_RE = re.compile(
+    r"(?:tool\s+name\s*:\s*|tool\s+|maven\s+|jdk\s+|gradle\s+|nodejs\s+)['\"]([^'\"]+)['\"]"
+)
+
+
+def _extract_cred_id(line: str) -> str:
+    m = re.search(
+        r"credentials\s*\(\s*['\"]([^'\"]+)['\"]|credentialsId\s*:\s*['\"]([^'\"]+)['\"]",
+        line,
+    )
+    return (m.group(1) or m.group(2)) if m else ""
+
+
+def _extract_tool_name(line: str) -> str:
+    m = _TOOL_NAME_RE.search(line)
+    return m.group(1) if m else ""
+
+
 def _filter_potential_issues(
     issues: list,
     report: "VerificationReport",
     primary_fix_type: str = "",
     primary_cred_id: str = "",
     primary_tool_ref: str = "",
+    jenkins_url: str = "",
+    jenkins_auth: tuple | None = None,
 ) -> list:
     """
-    Cross-check LLM potential_issues against VerificationReport.
+    Cross-check LLM potential_issues against VerificationReport, with live
+    Jenkins API fallback for unverified config findings.
 
-    Config issues (tool/credential):
-      - Confirmed by crawler  → keep, confidence="confirmed"
-      - Contradicted (tool/cred exists) → drop
-      - Crawler has no data → keep, confidence="unverified"
+    Config (tool/credential):
+      1. crawler confirmed  → keep, confidence="confirmed"
+      2. crawler contradicted (tool/cred exists) → drop
+      3. crawler silent → live Jenkins API check:
+           - missing → keep, confidence="confirmed"
+           - exists  → drop
+           - API unreachable → keep, confidence="unverified"
 
     Syntax/logic issues: pass through, confidence="llm_only".
     Dedup: drop if matches primary fix exactly.
     """
+    from verification import jenkins_crawler
+
     result = []
     missing_creds = set(report.missing_credentials)
     mismatched_tool_refs = {m.referenced for m in report.mismatched_tools}
@@ -754,29 +787,40 @@ def _filter_potential_issues(
 
         if itype == "config":
             if fix_type == "configure_tool":
+                tool_ref = _extract_tool_name(line)
                 if primary_fix_type == "configure_tool" and primary_tool_ref and primary_tool_ref in line:
                     continue
+
                 if mismatched_tool_refs and any(ref in line for ref in mismatched_tool_refs):
-                    result.append({**issue, "confidence": "confirmed"})
-                elif matched_tools and any(t in line for t in matched_tools):
+                    result.append({**issue, "confidence": "confirmed", "tool_ref": tool_ref})
+                    continue
+                if matched_tools and any(t in line for t in matched_tools):
+                    continue
+
+                live = jenkins_crawler.tool_exists(tool_ref, jenkins_url, auth=jenkins_auth) if (tool_ref and jenkins_url) else None
+                if live is False:
+                    result.append({**issue, "confidence": "confirmed", "tool_ref": tool_ref})
+                elif live is True:
                     continue
                 else:
-                    result.append({**issue, "confidence": "unverified"})
+                    result.append({**issue, "confidence": "unverified", "tool_ref": tool_ref})
 
             elif fix_type == "configure_credential":
-                cred_match = re.search(
-                    r"credentials\s*\(\s*['\"]([^'\"]+)['\"]|credentialsId\s*:\s*['\"]([^'\"]+)['\"]",
-                    line,
-                )
-                cred_id = (cred_match.group(1) or cred_match.group(2)) if cred_match else ""
+                cred_id = _extract_cred_id(line)
                 if primary_fix_type == "configure_credential" and primary_cred_id and primary_cred_id == cred_id:
                     continue
+
                 if cred_id and cred_id in missing_creds:
-                    result.append({**issue, "confidence": "confirmed"})
-                elif cred_id and cred_id not in missing_creds and report.errors == []:
+                    result.append({**issue, "confidence": "confirmed", "credential_id": cred_id})
+                    continue
+
+                live = jenkins_crawler.credential_exists(cred_id, jenkins_url, auth=jenkins_auth) if (cred_id and jenkins_url) else None
+                if live is False:
+                    result.append({**issue, "confidence": "confirmed", "credential_id": cred_id})
+                elif live is True:
                     continue
                 else:
-                    result.append({**issue, "confidence": "unverified"})
+                    result.append({**issue, "confidence": "unverified", "credential_id": cred_id})
             else:
                 result.append({**issue, "confidence": "unverified"})
         else:

@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
 import { ApplyFixModal } from './ApplyFixModal'
 import { PotentialIssuesCard } from './PotentialIssuesCard'
+import { MissingCredentialModal } from './MissingCredentialModal'
 import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType, CredentialFields } from '@/types'
 
@@ -93,6 +94,8 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
     credentialId: string
     jenkinsUrl: string
   } | null>(null)
+  const [relatedExpanded, setRelatedExpanded] = useState(false)
+  const [pendingPotentialCred, setPendingPotentialCred] = useState<{ credentialId: string; idx: number } | null>(null)
 
   const { analysis, fixResult, steps, dismissed } = card
   const isRunning  = !analysis && steps.some(s => s.status === 'running')
@@ -160,6 +163,71 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
         })
       }
     } finally { setFixing(false) }
+  }
+
+  async function dispatchPotentialFix(issue: import('@/types').PotentialIssue, idx: number): Promise<{ ok: boolean; error?: string }> {
+    if (issue.fix_type === 'configure_credential') {
+      const credId = issue.credential_id ?? ''
+      if (!credId) return { ok: false, error: 'No credential ID' }
+      setPendingPotentialCred({ credentialId: credId, idx })
+      return { ok: true }
+    }
+
+    const body: Record<string, string> = {
+      fix_type: issue.fix_type,
+      job_name: card.job,
+      build_number: String(card.build),
+    }
+
+    if (issue.fix_type === 'configure_tool') {
+      const ref = issue.tool_ref ?? ''
+      const match = analysis?.verification?.mismatched_tools?.find(m => m.referenced === ref)
+      if (match) {
+        body.referenced_name = match.referenced
+        body.configured_name = match.configured
+      } else if (ref) {
+        body.referenced_name = ref
+      }
+    }
+
+    if (issue.fix_type === 'fix_step_typo') {
+      body.bad_step = issue.line
+    }
+
+    try {
+      const res = await fetch('/api/fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (res.ok) return { ok: true }
+      const data = await res.json().catch(() => ({}))
+      return { ok: false, error: data.detail ?? `HTTP ${res.status}` }
+    } catch {
+      return { ok: false, error: 'Network error' }
+    }
+  }
+
+  async function submitPotentialCred(credentialId: string, credFields: import('@/types').CredentialFields | null) {
+    setPendingPotentialCred(null)
+    if (!credFields) return
+    await fetch('/api/fix', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fix_type: 'configure_credential',
+        job_name: card.job,
+        build_number: String(card.build),
+        credential_id: credentialId,
+        credential_type: credFields.credential_type,
+        secret_value: credFields.secret_value,
+        username: credFields.username,
+        password: credFields.password,
+        ssh_username: credFields.ssh_username,
+        private_key: credFields.private_key,
+        skip_retrigger: 'true',
+      }),
+    })
   }
 
   const borderColor = hasFailed  ? 'border-error-border'
@@ -363,13 +431,38 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
             />
           )}
 
-          {analysis?.potential_issues && analysis.potential_issues.length > 0 && (
-            <PotentialIssuesCard
-              issues={analysis.potential_issues}
+          {analysis?.potential_issues && analysis.potential_issues.length > 0 && isLatestFailing && (
+            <>
+              <button
+                onClick={() => setRelatedExpanded(v => !v)}
+                className="flex items-center gap-2 text-[12px] font-mono text-warning hover:text-warning/80 transition-colors cursor-pointer group"
+              >
+                {relatedExpanded
+                  ? <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+                  : <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />}
+                <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2} />
+                <span className="font-semibold underline-offset-2 group-hover:underline">
+                  {relatedExpanded ? 'Hide' : 'View'} related issues in this stage ({analysis.potential_issues.length})
+                </span>
+              </button>
+              {relatedExpanded && (
+                <PotentialIssuesCard
+                  issues={analysis.potential_issues}
+                  onFixIssue={dispatchPotentialFix}
+                />
+              )}
+            </>
+          )}
+
+          {pendingPotentialCred && (
+            <MissingCredentialModal
+              open={true}
+              pending={{ credentialId: pendingPotentialCred.credentialId }}
               jobName={card.job}
-              buildNumber={card.build}
-              verification={analysis.verification}
-              isLatestFailing={isLatestFailing}
+              index={1}
+              total={1}
+              onDone={(id, fields) => submitPotentialCred(id, fields)}
+              onSkipAll={() => setPendingPotentialCred(null)}
             />
           )}
 
