@@ -21,8 +21,27 @@ Response schema:
   "correct_line": "<the corrected version of that line — set when fix_type=fix_step_typo OR increase_timeout>",
   "bad_image": "<the exact invalid image tag as it appears in the FROM line, e.g. 'node:18-nonexistent' — only set when fix_type=pull_image>",
   "correct_image": "<the corrected image tag to use instead, e.g. 'node:18' or 'node:lts' — only set when fix_type=pull_image>",
-  "credential_type": "<only set when fix_type=configure_credential: 'secret_text' for string()/withCredentials string bindings, 'username_password' for usernamePassword() bindings, 'ssh_key' for sshUserPrivateKey() bindings>"
+  "credential_type": "<only set when fix_type=configure_credential: 'secret_text' for string()/withCredentials string bindings, 'username_password' for usernamePassword() bindings, 'ssh_key' for sshUserPrivateKey() bindings>",
+  "potential_issues": [
+    {
+      "type": "<config | syntax | logic>",
+      "line": "<exact Groovy snippet from the stage source that has the issue>",
+      "issue": "<short description of the problem>",
+      "fix_type": "<one of: configure_tool | configure_credential | fix_step_typo | pull_image | logic_error>"
+    }
+  ]
 }
+
+potential_issues rules:
+- Scan the ENTIRE Failing Stage Source for issues BEYOND the primary failure already described in root_cause
+- Do NOT repeat the primary failure (root_cause) as a potential issue
+- Each entry must reference an exact line from the Failing Stage Source — never fabricate lines
+- type=config: tool name, credential ID, or plugin reference that may not exist in Jenkins (configure_tool, configure_credential)
+- type=syntax: invalid DSL step, wrong method name, bad argument, Groovy syntax error (fix_step_typo)
+- type=logic: wrong image tag, wrong env var, bad shell command, incorrect branch name (pull_image or logic_error)
+- If no additional issues are found, return an empty array: "potential_issues": []
+- Maximum 5 entries — prioritize highest confidence findings
+- Do NOT include issues you are not reasonably confident about
 
 steps rules:
 - 2 to 5 short steps maximum

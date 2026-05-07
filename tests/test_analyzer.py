@@ -176,3 +176,64 @@ class TestAnalyze:
 
         assert result["fix_type"] == "diagnostic_only"
         assert result["confidence"] == 0.0
+
+
+class TestSystemPromptPotentialIssues:
+    def test_system_prompt_includes_potential_issues_schema(self):
+        from analyzer.prompt_builder import build_system_prompt
+        prompt = build_system_prompt()
+        assert "potential_issues" in prompt
+        assert "syntax" in prompt
+        assert "logic" in prompt
+        assert "config" in prompt
+
+
+class TestPotentialIssuesParsing:
+    def test_parse_potential_issues_valid(self):
+        raw = '''{
+            "root_cause": "Missing credential",
+            "fix_suggestion": "Create the credential",
+            "steps": ["Create aws-prod in Jenkins"],
+            "confidence": 0.9,
+            "fix_type": "configure_credential",
+            "potential_issues": [
+                {
+                    "type": "config",
+                    "line": "maven 'Maven-3'",
+                    "issue": "Tool name mismatch",
+                    "fix_type": "configure_tool"
+                },
+                {
+                    "type": "syntax",
+                    "line": "sh 'mvn clen install'",
+                    "issue": "Typo in maven goal",
+                    "fix_type": "fix_step_typo"
+                }
+            ]
+        }'''
+        result = parse_analysis_response(raw)
+        assert "potential_issues" in result
+        assert len(result["potential_issues"]) == 2
+        assert result["potential_issues"][0]["type"] == "config"
+        assert result["potential_issues"][1]["fix_type"] == "fix_step_typo"
+
+    def test_parse_potential_issues_missing_key_returns_empty(self):
+        raw = '{"root_cause": "Some error", "fix_suggestion": "Fix it", "steps": [], "confidence": 0.8, "fix_type": "retry"}'
+        result = parse_analysis_response(raw)
+        assert result["potential_issues"] == []
+
+    def test_parse_potential_issues_malformed_entry_skipped(self):
+        raw = '''{
+            "root_cause": "Some error",
+            "fix_suggestion": "Fix it",
+            "steps": [],
+            "confidence": 0.8,
+            "fix_type": "retry",
+            "potential_issues": [
+                {"type": "config", "line": "good entry", "issue": "real issue", "fix_type": "configure_tool"},
+                {"broken": true}
+            ]
+        }'''
+        result = parse_analysis_response(raw)
+        assert len(result["potential_issues"]) == 1
+        assert result["potential_issues"][0]["line"] == "good entry"
