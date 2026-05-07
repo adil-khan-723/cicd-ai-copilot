@@ -12,6 +12,9 @@ VALID_FIX_TYPES = {
     "configure_tool", "configure_credential", "fix_step_typo", "diagnostic_only", "missing_plugin",
 }
 
+VALID_POTENTIAL_ISSUE_TYPES = {"config", "syntax", "logic"}
+VALID_POTENTIAL_FIX_TYPES = {"configure_tool", "configure_credential", "fix_step_typo", "pull_image", "logic_error"}
+
 # Extracts JSON object from text that might have surrounding prose or markdown fences
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 _JSON_BARE = re.compile(r"\{.*\}", re.DOTALL)
@@ -89,6 +92,34 @@ def _validate(data: dict) -> dict:
         result["correct_image"] = str(data["correct_image"])
     if data.get("credential_type"):
         result["credential_type"] = str(data["credential_type"]).strip().lower()
+    result["potential_issues"] = _parse_potential_issues(data.get("potential_issues", []))
+    return result
+
+
+def _parse_potential_issues(raw_list) -> list:
+    """Parse and validate potential_issues list from LLM response. Skips malformed entries."""
+    if not isinstance(raw_list, list):
+        return []
+    result = []
+    for entry in raw_list[:5]:
+        if not isinstance(entry, dict):
+            continue
+        issue_type = str(entry.get("type", "")).strip().lower()
+        line = str(entry.get("line", "")).strip()
+        issue = str(entry.get("issue", "")).strip()
+        fix_type = str(entry.get("fix_type", "")).strip().lower()
+        if not issue_type or not line or not issue or not fix_type:
+            continue
+        if issue_type not in VALID_POTENTIAL_ISSUE_TYPES:
+            continue
+        if fix_type not in VALID_POTENTIAL_FIX_TYPES:
+            continue
+        result.append({
+            "type": issue_type,
+            "line": line,
+            "issue": issue,
+            "fix_type": fix_type,
+        })
     return result
 
 
@@ -99,4 +130,5 @@ def _fallback(reason: str) -> dict:
         "steps": [],
         "confidence": 0.0,
         "fix_type": "diagnostic_only",
+        "potential_issues": [],
     }
