@@ -158,6 +158,33 @@ export default function App() {
     } catch { /* storage full — ignore */ }
   }, [cards, activeProfileId])
 
+  // Periodic prune: drop cards whose Jenkins job no longer exists
+  useEffect(() => {
+    if (!activeProfileId) return
+    const tick = async () => {
+      try {
+        const res = await fetch('/api/jobs')
+        if (!res.ok) return
+        const jobs = (await res.json()) as Array<{ name: string }>
+        const live = new Set(jobs.map(j => j.name))
+        setCards(prev => {
+          let changed = false
+          const next = new Map(prev)
+          for (const [k, card] of prev) {
+            if (!live.has(card.job)) {
+              next.delete(k)
+              changed = true
+            }
+          }
+          return changed ? next : prev
+        })
+      } catch { /* offline — keep cards as-is */ }
+    }
+    tick()
+    const id = window.setInterval(tick, 60_000)
+    return () => window.clearInterval(id)
+  }, [activeProfileId])
+
   function dismissCard(key: string) {
     setCards(prev => {
       const next = new Map(prev)
