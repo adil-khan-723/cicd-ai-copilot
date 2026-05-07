@@ -170,6 +170,7 @@ export default function App() {
   function clearFeed() {
     setCards(new Map())
     if (activeProfileId) localStorage.removeItem(`pipeline_feed_cards_${activeProfileId}`)
+    fetch('/api/feed/clear', { method: 'POST' }).catch(() => {})
   }
 
   function discardJob(job: string) {
