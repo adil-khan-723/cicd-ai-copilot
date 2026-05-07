@@ -191,3 +191,61 @@ def test_cache_cleared_on_startup():
     with patch("analyzer.cache.clear_all") as mock_clear:
         with TestClient(app):
             mock_clear.assert_called_once()
+
+
+class TestFilterPotentialIssues:
+    def test_filter_config_issue_confirmed_by_crawler(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport, ToolMismatch
+        report = VerificationReport(platform="jenkins")
+        report.mismatched_tools.append(ToolMismatch(referenced="Maven-3", configured="Maven3", match_score=0.91))
+        issues = [{"type": "config", "line": "maven 'Maven-3'", "issue": "Tool mismatch", "fix_type": "configure_tool"}]
+        result = _filter_potential_issues(issues, report)
+        assert len(result) == 1
+        assert result[0]["confidence"] == "confirmed"
+
+    def test_filter_config_issue_contradicted_by_crawler_dropped(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        report.matched_tools.append("Maven3")
+        issues = [{"type": "config", "line": "maven 'Maven3'", "issue": "Tool mismatch", "fix_type": "configure_tool"}]
+        result = _filter_potential_issues(issues, report)
+        assert len(result) == 0
+
+    def test_filter_missing_credential_confirmed(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        report.missing_credentials.append("aws-prod")
+        issues = [{"type": "config", "line": "credentials('aws-prod')", "issue": "Missing cred", "fix_type": "configure_credential"}]
+        result = _filter_potential_issues(issues, report)
+        assert len(result) == 1
+        assert result[0]["confidence"] == "confirmed"
+
+    def test_filter_syntax_issue_passes_through_as_llm_only(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        issues = [{"type": "syntax", "line": "sh 'mvn clen install'", "issue": "Typo", "fix_type": "fix_step_typo"}]
+        result = _filter_potential_issues(issues, report)
+        assert len(result) == 1
+        assert result[0]["confidence"] == "llm_only"
+
+    def test_filter_logic_issue_passes_through_as_llm_only(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        issues = [{"type": "logic", "line": "sh 'docker push $IMAGE'", "issue": "Unset var", "fix_type": "logic_error"}]
+        result = _filter_potential_issues(issues, report)
+        assert len(result) == 1
+        assert result[0]["confidence"] == "llm_only"
+
+    def test_filter_dedup_removes_primary_fix_match(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        report.missing_credentials.append("aws-prod")
+        issues = [{"type": "config", "line": "credentials('aws-prod')", "issue": "Missing cred", "fix_type": "configure_credential"}]
+        result = _filter_potential_issues(issues, report, primary_fix_type="configure_credential", primary_cred_id="aws-prod")
+        assert len(result) == 0

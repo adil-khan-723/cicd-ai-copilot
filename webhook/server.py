@@ -540,6 +540,22 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             len(analysis.get("steps", [])),
         )
 
+        # Filter and cross-check potential issues from LLM against crawler report
+        primary_cred_id = ""
+        if analysis.get("fix_type") == "configure_credential" and report.missing_credentials:
+            primary_cred_id = report.missing_credentials[0]
+        primary_tool_ref = ""
+        if analysis.get("fix_type") == "configure_tool" and report.mismatched_tools:
+            primary_tool_ref = report.mismatched_tools[0].referenced
+
+        filtered_potential_issues = _filter_potential_issues(
+            analysis.get("potential_issues", []),
+            report,
+            primary_fix_type=analysis.get("fix_type", ""),
+            primary_cred_id=primary_cred_id,
+            primary_tool_ref=primary_tool_ref,
+        )
+
         # Determine step status: if no LLM was available, mark as failed so UI shows it clearly
         llm_ok = analysis.get("confidence", 0) > 0 or analysis.get("fix_type") != "diagnostic_only"
         context_status = "done" if llm_ok else "failed"
@@ -575,6 +591,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "bad_image": analysis.get("bad_image"),
             "correct_image": analysis.get("correct_image"),
             "credential_type": analysis.get("credential_type"),
+            "potential_issues": filtered_potential_issues,
             "pipeline_stages": [
                 {"name": name, "status": status}
                 for name, status in ctx.pipeline_stages
@@ -705,6 +722,67 @@ def _run_verification(ctx, payload: dict) -> "VerificationReport":
                     pass
 
     return report
+
+
+def _filter_potential_issues(
+    issues: list,
+    report: "VerificationReport",
+    primary_fix_type: str = "",
+    primary_cred_id: str = "",
+    primary_tool_ref: str = "",
+) -> list:
+    """
+    Cross-check LLM potential_issues against VerificationReport.
+
+    Config issues (tool/credential):
+      - Confirmed by crawler  → keep, confidence="confirmed"
+      - Contradicted (tool/cred exists) → drop
+      - Crawler has no data → keep, confidence="unverified"
+
+    Syntax/logic issues: pass through, confidence="llm_only".
+    Dedup: drop if matches primary fix exactly.
+    """
+    result = []
+    missing_creds = set(report.missing_credentials)
+    mismatched_tool_refs = {m.referenced for m in report.mismatched_tools}
+    matched_tools = set(report.matched_tools)
+
+    for issue in issues:
+        itype = issue.get("type", "")
+        fix_type = issue.get("fix_type", "")
+        line = issue.get("line", "")
+
+        if itype == "config":
+            if fix_type == "configure_tool":
+                if primary_fix_type == "configure_tool" and primary_tool_ref and primary_tool_ref in line:
+                    continue
+                if mismatched_tool_refs and any(ref in line for ref in mismatched_tool_refs):
+                    result.append({**issue, "confidence": "confirmed"})
+                elif matched_tools and any(t in line for t in matched_tools):
+                    continue
+                else:
+                    result.append({**issue, "confidence": "unverified"})
+
+            elif fix_type == "configure_credential":
+                cred_match = re.search(
+                    r"credentials\s*\(\s*['\"]([^'\"]+)['\"]|credentialsId\s*:\s*['\"]([^'\"]+)['\"]",
+                    line,
+                )
+                cred_id = (cred_match.group(1) or cred_match.group(2)) if cred_match else ""
+                if primary_fix_type == "configure_credential" and primary_cred_id and primary_cred_id == cred_id:
+                    continue
+                if cred_id and cred_id in missing_creds:
+                    result.append({**issue, "confidence": "confirmed"})
+                elif cred_id and cred_id not in missing_creds and report.errors == []:
+                    continue
+                else:
+                    result.append({**issue, "confidence": "unverified"})
+            else:
+                result.append({**issue, "confidence": "unverified"})
+        else:
+            result.append({**issue, "confidence": "llm_only"})
+
+    return result
 
 
 def _summarise(payload: dict, source: str) -> str:
