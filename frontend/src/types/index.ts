@@ -33,6 +33,14 @@ export interface VerificationData {
   errors: string[]
 }
 
+export interface PotentialIssue {
+  type: 'config' | 'syntax' | 'logic'
+  line: string
+  issue: string
+  fix_type: string
+  confidence: 'confirmed' | 'llm_only' | 'unverified'
+}
+
 export interface AnalysisCompleteEvent {
   type: 'analysis_complete'
   job: string
@@ -51,6 +59,7 @@ export interface AnalysisCompleteEvent {
   bad_image?: string
   correct_image?: string
   credential_type?: string
+  potential_issues?: PotentialIssue[]
 }
 
 export interface CredentialFields {
