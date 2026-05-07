@@ -488,8 +488,11 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         # LLM output is probabilistic. If the crawler found a mismatch/missing cred
         # and the LLM didn't pick it up, force the correct fix_type.
         # Skip when a compile error is present — syntax must be fixed first.
-        if not _has_compile_error:
-            if report.mismatched_tools and analysis.get("fix_type") != "configure_tool":
+        # Skip when LLM already picked a verified fix_type — secondary findings
+        # belong in potential_issues, not as a second override.
+        _llm_fix = analysis.get("fix_type")
+        if not _has_compile_error and _llm_fix not in ("configure_tool", "configure_credential"):
+            if report.mismatched_tools:
                 analysis["fix_type"] = "configure_tool"
                 analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.85)
                 if not analysis.get("fix_suggestion"):
@@ -498,7 +501,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
                         f"Rename tool reference from '{m.referenced}' to '{m.configured}' "
                         f"in the Jenkinsfile tools block."
                     )
-            elif report.missing_credentials and analysis.get("fix_type") != "configure_credential":
+            elif report.missing_credentials:
                 analysis["fix_type"] = "configure_credential"
                 analysis["confidence"] = max(analysis.get("confidence", 0.5), 0.82)
                 if not analysis.get("fix_suggestion"):
