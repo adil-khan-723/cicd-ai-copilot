@@ -249,3 +249,46 @@ class TestFilterPotentialIssues:
         issues = [{"type": "config", "line": "credentials('aws-prod')", "issue": "Missing cred", "fix_type": "configure_credential"}]
         result = _filter_potential_issues(issues, report, primary_fix_type="configure_credential", primary_cred_id="aws-prod")
         assert len(result) == 0
+
+    def test_filter_live_api_confirms_missing_cred_when_crawler_silent(self):
+        """Crawler didn't list it but live API says it doesn't exist → confirmed."""
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        issues = [{"type": "config", "line": "credentialsId: 'aws-prod-key'", "issue": "Missing cred", "fix_type": "configure_credential"}]
+        with patch("verification.jenkins_crawler.credential_exists", return_value=False):
+            result = _filter_potential_issues(issues, report, jenkins_url="http://j", jenkins_auth=("u","t"))
+        assert len(result) == 1
+        assert result[0]["confidence"] == "confirmed"
+        assert result[0]["credential_id"] == "aws-prod-key"
+
+    def test_filter_live_api_drops_cred_that_actually_exists(self):
+        """Crawler silent + live API confirms cred exists → drop."""
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        issues = [{"type": "config", "line": "credentialsId: 'real-cred'", "issue": "Missing cred", "fix_type": "configure_credential"}]
+        with patch("verification.jenkins_crawler.credential_exists", return_value=True):
+            result = _filter_potential_issues(issues, report, jenkins_url="http://j", jenkins_auth=("u","t"))
+        assert len(result) == 0
+
+    def test_filter_live_api_unreachable_keeps_unverified(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        issues = [{"type": "config", "line": "credentialsId: 'unknown'", "issue": "Missing cred", "fix_type": "configure_credential"}]
+        with patch("verification.jenkins_crawler.credential_exists", return_value=None):
+            result = _filter_potential_issues(issues, report, jenkins_url="http://j", jenkins_auth=("u","t"))
+        assert len(result) == 1
+        assert result[0]["confidence"] == "unverified"
+
+    def test_filter_live_api_confirms_missing_tool(self):
+        from webhook.server import _filter_potential_issues
+        from verification.models import VerificationReport
+        report = VerificationReport(platform="jenkins")
+        issues = [{"type": "config", "line": "tool name: 'Maven3'", "issue": "Tool missing", "fix_type": "configure_tool"}]
+        with patch("verification.jenkins_crawler.tool_exists", return_value=False):
+            result = _filter_potential_issues(issues, report, jenkins_url="http://j", jenkins_auth=("u","t"))
+        assert len(result) == 1
+        assert result[0]["confidence"] == "confirmed"
+        assert result[0]["tool_ref"] == "Maven3"

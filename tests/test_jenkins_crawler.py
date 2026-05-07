@@ -412,6 +412,54 @@ class TestCrumbAttachment:
         assert script_route.calls[0].request.headers.get("Jenkins-Crumb") == "abc123def"
 
     @respx.mock
+    def test_credential_exists_returns_true_when_present(self):
+        from verification.jenkins_crawler import credential_exists
+        respx.get(f"{JENKINS_URL}/credentials/store/system/domain/_/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={
+                "credentials": [{"id": "aws-prod-key"}, {"id": "github-token"}]
+            })
+        )
+        assert credential_exists("aws-prod-key", JENKINS_URL) is True
+
+    @respx.mock
+    def test_credential_exists_returns_false_when_absent(self):
+        from verification.jenkins_crawler import credential_exists
+        respx.get(f"{JENKINS_URL}/credentials/store/system/domain/_/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={"credentials": [{"id": "github-token"}]})
+        )
+        assert credential_exists("aws-prod-key", JENKINS_URL) is False
+
+    @respx.mock
+    def test_credential_exists_returns_none_on_jenkins_error(self):
+        from verification.jenkins_crawler import credential_exists
+        respx.get(f"{JENKINS_URL}/credentials/store/system/domain/_/api/json?depth=1").mock(
+            return_value=httpx.Response(500)
+        )
+        assert credential_exists("aws-prod-key", JENKINS_URL) is None
+
+    @respx.mock
+    def test_tool_exists_returns_true_when_configured(self):
+        from verification.jenkins_crawler import tool_exists
+        respx.get(f"{JENKINS_URL}/crumbIssuer/api/json").mock(
+            return_value=httpx.Response(200, json={"crumbRequestField": "Jenkins-Crumb", "crumb": "x"})
+        )
+        respx.post(f"{JENKINS_URL}/scriptText").mock(
+            return_value=httpx.Response(200, text="maven:Maven-3\njdk:JDK-17\n")
+        )
+        assert tool_exists("Maven-3", JENKINS_URL) is True
+
+    @respx.mock
+    def test_tool_exists_returns_false_when_absent(self):
+        from verification.jenkins_crawler import tool_exists
+        respx.get(f"{JENKINS_URL}/crumbIssuer/api/json").mock(
+            return_value=httpx.Response(200, json={"crumbRequestField": "Jenkins-Crumb", "crumb": "x"})
+        )
+        respx.post(f"{JENKINS_URL}/scriptText").mock(
+            return_value=httpx.Response(200, text="maven:Maven-3\n")
+        )
+        assert tool_exists("Maven3", JENKINS_URL) is False
+
+    @respx.mock
     def test_crumb_fetch_404_does_not_break(self):
         respx.get(f"{JENKINS_URL}/crumbIssuer/api/json").mock(
             return_value=httpx.Response(404)
