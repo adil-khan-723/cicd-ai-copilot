@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
 import { ApplyFixModal } from './ApplyFixModal'
+import { PotentialIssuesCard } from './PotentialIssuesCard'
 import { cn } from '@/lib/utils'
 import type { BuildCard as BuildCardType, CredentialFields } from '@/types'
 
@@ -359,6 +360,16 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
               buildNumber={card.build}
               onAccept={applyFix}
               onCancel={() => setModalOpen(false)}
+            />
+          )}
+
+          {analysis?.potential_issues && analysis.potential_issues.length > 0 && (
+            <PotentialIssuesCard
+              issues={analysis.potential_issues}
+              jobName={card.job}
+              buildNumber={card.build}
+              verification={analysis.verification}
+              isLatestFailing={isLatestFailing}
             />
           )}
 
