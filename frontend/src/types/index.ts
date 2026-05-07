@@ -39,6 +39,8 @@ export interface PotentialIssue {
   issue: string
   fix_type: string
   confidence: 'confirmed' | 'llm_only' | 'unverified'
+  credential_id?: string
+  tool_ref?: string
 }
 
 export interface AnalysisCompleteEvent {
