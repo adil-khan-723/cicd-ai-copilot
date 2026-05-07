@@ -67,6 +67,7 @@ def verify_jenkins_tools(
 
     try:
         with httpx.Client(auth=auth, timeout=timeout) as client:
+            _attach_crumb(client, jenkins_url)
             configured_tools = _fetch_configured_tools(client, jenkins_url)
             tool_install_details = _fetch_tool_install_details(client, jenkins_url)
             installed_plugins = _fetch_installed_plugins(client, jenkins_url)
@@ -150,6 +151,25 @@ def _parse_credentials(content: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Jenkins API fetchers
 # ---------------------------------------------------------------------------
+
+def _attach_crumb(client: httpx.Client, jenkins_url: str) -> None:
+    """
+    Fetch Jenkins CSRF crumb and add it as a default header on the client.
+    Required for POST /scriptText. Silent if Jenkins has CSRF disabled or auth fails.
+    """
+    url = f"{jenkins_url.rstrip('/')}/crumbIssuer/api/json"
+    try:
+        resp = client.get(url)
+        if resp.status_code != 200:
+            return
+        data = resp.json()
+        field = data.get("crumbRequestField")
+        crumb = data.get("crumb")
+        if field and crumb:
+            client.headers[field] = crumb
+    except Exception:
+        pass
+
 
 def _fetch_configured_tools(client: httpx.Client, jenkins_url: str) -> dict[str, list[str]]:
     """

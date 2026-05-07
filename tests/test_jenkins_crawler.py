@@ -383,3 +383,48 @@ class TestVerifyJenkinsToolsIntegration:
         report = verify_jenkins_tools(JENKINSFILE_DIRECT_MVN, JENKINS_URL)
         assert len(report.tool_usage_pattern_issues) == 1
         assert report.has_issues
+
+
+class TestCrumbAttachment:
+    @respx.mock
+    def test_crumb_fetched_and_attached_to_script_post(self):
+        crumb_route = respx.get(f"{JENKINS_URL}/crumbIssuer/api/json").mock(
+            return_value=httpx.Response(200, json={
+                "crumbRequestField": "Jenkins-Crumb",
+                "crumb": "abc123def",
+            })
+        )
+        # Capture script POST and verify crumb header present
+        script_route = respx.post(f"{JENKINS_URL}/scriptText").mock(
+            return_value=httpx.Response(200, text="maven:Maven-3\n")
+        )
+        respx.get(f"{JENKINS_URL}/pluginManager/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={"plugins": []})
+        )
+        respx.get(f"{JENKINS_URL}/credentials/store/system/domain/_/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={"credentials": []})
+        )
+
+        verify_jenkins_tools("pipeline { tools { maven 'Maven-3' } }", JENKINS_URL)
+
+        assert crumb_route.called
+        assert script_route.called
+        assert script_route.calls[0].request.headers.get("Jenkins-Crumb") == "abc123def"
+
+    @respx.mock
+    def test_crumb_fetch_404_does_not_break(self):
+        respx.get(f"{JENKINS_URL}/crumbIssuer/api/json").mock(
+            return_value=httpx.Response(404)
+        )
+        respx.post(f"{JENKINS_URL}/scriptText").mock(
+            return_value=httpx.Response(200, text="maven:Maven-3\n")
+        )
+        respx.get(f"{JENKINS_URL}/pluginManager/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={"plugins": []})
+        )
+        respx.get(f"{JENKINS_URL}/credentials/store/system/domain/_/api/json?depth=1").mock(
+            return_value=httpx.Response(200, json={"credentials": []})
+        )
+
+        report = verify_jenkins_tools("pipeline { tools { maven 'Maven-3' } }", JENKINS_URL)
+        assert report.errors == []
