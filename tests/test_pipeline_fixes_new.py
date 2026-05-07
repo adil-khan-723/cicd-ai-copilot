@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 import jenkins as jenkins_lib
-from agent.pipeline_fixes import configure_tool, configure_credential
+from agent.pipeline_fixes import configure_tool, configure_credential, fix_step_typo
 
 
 class TestConfigureTool:
@@ -86,6 +86,65 @@ def _make_session_mock(crumb_json=None, post_status=200, post_side_effect=None):
         session.post.return_value = post_response
 
     return session
+
+
+class TestSkipRetrigger:
+    """skip_retrigger=True patches Jenkinsfile but does not call build_job."""
+
+    def test_configure_tool_skips_retrigger(self):
+        config_xml = """<project>
+  <definition>
+    <script>pipeline { tools { maven 'Maven3' } }</script>
+  </definition>
+</project>"""
+        server = MagicMock()
+        server.get_job_config.return_value = config_xml
+        with patch("agent.pipeline_fixes._get_jenkins_server", return_value=server):
+            result = configure_tool(
+                job_name="job", build_number="1",
+                referenced_name="Maven3", configured_name="Maven-3",
+                skip_retrigger=True,
+            )
+        assert result.success
+        server.reconfig_job.assert_called_once()
+        server.build_job.assert_not_called()
+        assert "deferred" in result.detail.lower()
+
+    def test_fix_step_typo_skips_retrigger(self):
+        config_xml = """<project>
+  <definition>
+    <script>pipeline { stages { stage('x') { steps { sh 'mvn clen verify' } } } }</script>
+  </definition>
+</project>"""
+        server = MagicMock()
+        server.get_job_config.return_value = config_xml
+        with patch("agent.pipeline_fixes._get_jenkins_server", return_value=server):
+            result = fix_step_typo(
+                job_name="job", build_number="1",
+                bad_step="sh 'mvn clen verify'",
+                correct_step="sh 'mvn clean verify'",
+                skip_retrigger=True,
+            )
+        assert result.success
+        server.reconfig_job.assert_called_once()
+        server.build_job.assert_not_called()
+
+    def test_configure_tool_default_retriggers(self):
+        config_xml = """<project>
+  <definition>
+    <script>pipeline { tools { maven 'Maven3' } }</script>
+  </definition>
+</project>"""
+        server = MagicMock()
+        server.get_job_config.return_value = config_xml
+        with patch("agent.pipeline_fixes._get_jenkins_server", return_value=server):
+            result = configure_tool(
+                job_name="job", build_number="1",
+                referenced_name="Maven3", configured_name="Maven-3",
+            )
+        assert result.success
+        server.reconfig_job.assert_called_once()
+        server.build_job.assert_called_once()
 
 
 class TestConfigureCredential:

@@ -5,7 +5,12 @@ import {
   KeyRound, AlertTriangle, CheckCircle2, ChevronRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { AnalysisCompleteEvent, CredentialFields } from '@/types'
+import type { AnalysisCompleteEvent, CredentialFields, PotentialIssue } from '@/types'
+
+export interface SelectedPotential {
+  issue: PotentialIssue
+  credFields?: CredentialFields | null
+}
 
 // ── fix type metadata ────────────────────────────────────────────────────────
 
@@ -91,8 +96,42 @@ interface Props {
   analysis: AnalysisCompleteEvent
   jobName: string
   buildNumber: string | number
-  onAccept: (credFields?: CredentialFields | null, resolvedCorrectStep?: string) => void
+  onAccept: (
+    credFields?: CredentialFields | null,
+    resolvedCorrectStep?: string,
+    selectedPotentials?: SelectedPotential[],
+  ) => void
   onCancel: () => void
+}
+
+type PotentialCredState = {
+  selected: boolean
+  credType: 'secret_text' | 'username_password' | 'ssh_key'
+  secretValue: string
+  username: string
+  password: string
+  sshUsername: string
+  privateKey: string
+}
+
+function emptyCredState(): PotentialCredState {
+  return {
+    selected: true,
+    credType: 'secret_text',
+    secretValue: '',
+    username: '',
+    password: '',
+    sshUsername: '',
+    privateKey: '',
+  }
+}
+
+function isCredFilled(s: PotentialCredState): boolean {
+  return (
+    (s.credType === 'secret_text'       && s.secretValue.trim() !== '') ||
+    (s.credType === 'username_password' && s.username.trim() !== '' && s.password.trim() !== '') ||
+    (s.credType === 'ssh_key'           && s.sshUsername.trim() !== '' && s.privateKey.trim() !== '')
+  )
 }
 
 const _PLACEHOLDER_RE = /<([a-z][a-z0-9 _-]+)>/gi
@@ -131,6 +170,11 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
   const hasStepPlaceholders = stepPlaceholders.length > 0
   const [placeholderValues, setPlaceholderValues] = useState<Record<string, string>>({})
 
+  // Potential issues — selection + inline cred fields per issue
+  const potentialIssues = analysis.potential_issues ?? []
+  const [potentialSelected, setPotentialSelected] = useState<boolean[]>([])
+  const [potentialCreds, setPotentialCreds] = useState<Record<number, PotentialCredState>>({})
+
   // reset fields when modal opens
   useEffect(() => {
     if (open) {
@@ -141,8 +185,16 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
       setSshUsername('')
       setPrivateKey('')
       setPlaceholderValues({})
+      // default: select every fixable potential, except logic_error
+      const sel = potentialIssues.map(p => p.fix_type !== 'logic_error')
+      setPotentialSelected(sel)
+      const creds: Record<number, PotentialCredState> = {}
+      potentialIssues.forEach((p, i) => {
+        if (p.fix_type === 'configure_credential') creds[i] = emptyCredState()
+      })
+      setPotentialCreds(creds)
     }
-  }, [open, typeFromLLM])
+  }, [open, typeFromLLM, analysis])
 
   const credFieldsFilled =
     !isCredential ||
@@ -153,6 +205,13 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
   const stepPlaceholdersFilled =
     !hasStepPlaceholders ||
     stepPlaceholders.every(p => (placeholderValues[p] ?? '').trim() !== '')
+
+  const potentialCredsFilled = potentialIssues.every((p, i) => {
+    if (!potentialSelected[i]) return true
+    if (p.fix_type !== 'configure_credential') return true
+    const s = potentialCreds[i]
+    return s ? isCredFilled(s) : false
+  })
 
   // close on Escape
   useEffect(() => {
@@ -433,6 +492,148 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                   </p>
                 </div>
 
+                {/* Related issues — select which to fix together */}
+                {potentialIssues.length > 0 && (
+                  <div className="rounded-xl border border-warning-border bg-warning-dim/40 px-4 py-3.5 space-y-3">
+                    <div>
+                      <p className="text-[10px] font-mono font-semibold text-warning uppercase tracking-[0.12em]">
+                        Also Found in This Stage ({potentialIssues.length})
+                      </p>
+                      <p className="text-[11px] text-text-dim mt-0.5">
+                        Select which related issues to fix together with the primary fix.
+                      </p>
+                    </div>
+
+                    {potentialIssues.map((p, i) => {
+                      const selected = potentialSelected[i] ?? false
+                      const isLogicOnly = p.fix_type === 'logic_error'
+                      const isCred = p.fix_type === 'configure_credential'
+                      const credState = potentialCreds[i]
+                      return (
+                        <div
+                          key={i}
+                          className={cn(
+                            'rounded-lg border px-3 py-2.5 space-y-2 transition-colors',
+                            selected
+                              ? 'border-warning-border bg-white/80'
+                              : 'border-accent-border/30 bg-white/40 opacity-70',
+                          )}
+                        >
+                          <label className="flex items-start gap-2.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              disabled={isLogicOnly}
+                              checked={selected && !isLogicOnly}
+                              onChange={e => {
+                                const next = [...potentialSelected]
+                                next[i] = e.target.checked
+                                setPotentialSelected(next)
+                              }}
+                              className="mt-0.5 h-3.5 w-3.5 rounded accent-warning cursor-pointer disabled:cursor-not-allowed"
+                            />
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={cn(
+                                  'text-[9px] font-mono font-semibold uppercase tracking-[0.1em] px-1.5 py-0.5 rounded-md border',
+                                  p.confidence === 'confirmed'
+                                    ? 'text-warning bg-warning-dim border-warning-border'
+                                    : 'text-accent bg-accent/10 border-accent/30'
+                                )}>
+                                  {p.confidence === 'confirmed' ? 'confirmed' : p.confidence === 'unverified' ? 'unverified' : 'llm analysis'}
+                                </span>
+                                <span className="text-[10px] font-mono text-text-muted uppercase">{p.type}</span>
+                                {isLogicOnly && (
+                                  <span className="text-[10px] font-mono text-text-dim italic">manual review</span>
+                                )}
+                              </div>
+                              <p className="text-[12px] text-text-primary leading-relaxed">{p.issue}</p>
+                              <pre className="text-[10px] font-mono text-text-base bg-overlay/40 border border-accent-border/30 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap">
+                                {p.line}
+                              </pre>
+                            </div>
+                          </label>
+
+                          {/* Inline cred fields when selected */}
+                          {isCred && selected && credState && (
+                            <div className="ml-6 pl-3 border-l-2 border-warning-border/40 space-y-2">
+                              <p className="text-[10px] font-mono font-semibold text-text-muted uppercase tracking-[0.1em]">
+                                Credential value for "{p.credential_id}"
+                              </p>
+                              <div className="flex gap-1.5">
+                                {(['secret_text','username_password','ssh_key'] as const).map(t => (
+                                  <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() => setPotentialCreds(prev => ({ ...prev, [i]: { ...credState, credType: t } }))}
+                                    className={cn(
+                                      'flex-1 py-1 rounded-md text-[10px] font-semibold border transition-all duration-150 cursor-pointer',
+                                      credState.credType === t
+                                        ? 'bg-[#2e6da0] border-[#2e6da0] text-white'
+                                        : 'bg-white border-[rgba(46,109,160,0.25)] text-[#2e6da0] hover:bg-[#dbeafe]',
+                                    )}
+                                  >
+                                    {t === 'secret_text' ? 'Secret' : t === 'username_password' ? 'User/Pass' : 'SSH'}
+                                  </button>
+                                ))}
+                              </div>
+                              {credState.credType === 'secret_text' && (
+                                <input
+                                  type="password"
+                                  autoComplete="off"
+                                  placeholder="Secret value"
+                                  value={credState.secretValue}
+                                  onChange={e => setPotentialCreds(prev => ({ ...prev, [i]: { ...credState, secretValue: e.target.value } }))}
+                                  className="w-full px-2.5 py-1.5 rounded-md border border-[rgba(46,109,160,0.25)] text-[12px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                                />
+                              )}
+                              {credState.credType === 'username_password' && (
+                                <div className="space-y-1.5">
+                                  <input
+                                    type="text"
+                                    autoComplete="off"
+                                    placeholder="Username"
+                                    value={credState.username}
+                                    onChange={e => setPotentialCreds(prev => ({ ...prev, [i]: { ...credState, username: e.target.value } }))}
+                                    className="w-full px-2.5 py-1.5 rounded-md border border-[rgba(46,109,160,0.25)] text-[12px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                                  />
+                                  <input
+                                    type="password"
+                                    autoComplete="off"
+                                    placeholder="Password"
+                                    value={credState.password}
+                                    onChange={e => setPotentialCreds(prev => ({ ...prev, [i]: { ...credState, password: e.target.value } }))}
+                                    className="w-full px-2.5 py-1.5 rounded-md border border-[rgba(46,109,160,0.25)] text-[12px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                                  />
+                                </div>
+                              )}
+                              {credState.credType === 'ssh_key' && (
+                                <div className="space-y-1.5">
+                                  <input
+                                    type="text"
+                                    autoComplete="off"
+                                    placeholder="git"
+                                    value={credState.sshUsername}
+                                    onChange={e => setPotentialCreds(prev => ({ ...prev, [i]: { ...credState, sshUsername: e.target.value } }))}
+                                    className="w-full px-2.5 py-1.5 rounded-md border border-[rgba(46,109,160,0.25)] text-[12px] bg-white focus:outline-none focus:border-[#2e6da0]"
+                                  />
+                                  <textarea
+                                    rows={3}
+                                    autoComplete="off"
+                                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                                    value={credState.privateKey}
+                                    onChange={e => setPotentialCreds(prev => ({ ...prev, [i]: { ...credState, privateKey: e.target.value } }))}
+                                    className="w-full px-2.5 py-1.5 rounded-md border border-[rgba(46,109,160,0.25)] text-[11px] font-mono bg-white focus:outline-none focus:border-[#2e6da0] resize-y"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
                 {/* Warning note */}
                 <div className="flex items-start gap-2.5 rounded-xl border border-[rgba(176,125,42,0.2)] bg-warning-dim px-3.5 py-3">
                   <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 mt-0.5" strokeWidth={2} />
@@ -471,11 +672,33 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                 )}
 
                 <button
-                  disabled={!credFieldsFilled || !stepPlaceholdersFilled}
+                  disabled={!credFieldsFilled || !stepPlaceholdersFilled || !potentialCredsFilled}
                   onClick={() => {
                     const resolved = hasStepPlaceholders
                       ? resolvePlaceholders(correctStep, placeholderValues)
                       : undefined
+
+                    const selected: SelectedPotential[] = []
+                    potentialIssues.forEach((issue, i) => {
+                      if (!potentialSelected[i]) return
+                      if (issue.fix_type === 'logic_error') return
+                      if (issue.fix_type === 'configure_credential') {
+                        const s = potentialCreds[i]
+                        if (!s) return
+                        const credFields: CredentialFields = {
+                          credential_type: s.credType,
+                          secret_value:    s.credType === 'secret_text'       ? s.secretValue  : undefined,
+                          username:        s.credType === 'username_password' ? s.username     : undefined,
+                          password:        s.credType === 'username_password' ? s.password     : undefined,
+                          ssh_username:    s.credType === 'ssh_key'           ? s.sshUsername  : undefined,
+                          private_key:     s.credType === 'ssh_key'           ? s.privateKey   : undefined,
+                        }
+                        selected.push({ issue, credFields })
+                      } else {
+                        selected.push({ issue })
+                      }
+                    })
+
                     if (isCredential) {
                       onAccept({
                         credential_type: credType,
@@ -484,14 +707,15 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                         password:        credType === 'username_password' ? password     : undefined,
                         ssh_username:    credType === 'ssh_key'           ? sshUsername  : undefined,
                         private_key:     credType === 'ssh_key'           ? privateKey   : undefined,
-                      }, resolved)
+                      }, resolved, selected)
                     } else {
-                      onAccept(undefined, resolved)
+                      onAccept(undefined, resolved, selected)
                     }
                   }}
                   title={
                     !credFieldsFilled ? 'Fill in credential fields first' :
-                    !stepPlaceholdersFilled ? 'Fill in all required fields first' : undefined
+                    !stepPlaceholdersFilled ? 'Fill in all required fields first' :
+                    !potentialCredsFilled ? 'Fill values for selected related credentials' : undefined
                   }
                   className={cn(
                     'h-9 px-6 rounded-xl text-[13px] font-bold font-sans',
@@ -503,7 +727,12 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                   )}
                 >
                   {meta.icon}
-                  {isCredential ? 'Configure & Apply' : 'Accept & Apply Fix'}
+                  {(() => {
+                    const n = potentialSelected.filter((s, i) => s && potentialIssues[i].fix_type !== 'logic_error').length
+                    if (isCredential && n === 0) return 'Configure & Apply'
+                    if (n === 0) return 'Accept & Apply Fix'
+                    return `Apply ${1 + n} Fixes`
+                  })()}
                 </button>
               </div>
             </div>
