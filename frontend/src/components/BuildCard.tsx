@@ -416,7 +416,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
                   size="sm"
                   onClick={() => setModalOpen(true)}
                   disabled={fixing}
-                  className="gap-2 bg-accent hover:bg-accent-hi text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
+                  className="gap-2 bg-error hover:opacity-90 text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
                 >
                   {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
                   {fixing ? 'Fixing…' : `Fix ${fixableRelatedCount} related issue${fixableRelatedCount !== 1 ? 's' : ''}`}
@@ -463,7 +463,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
             <>
               <button
                 onClick={() => setRelatedExpanded(v => !v)}
-                className="flex items-center gap-2 text-[12px] font-mono text-accent hover:text-accent-hi transition-colors cursor-pointer group"
+                className="flex items-center gap-2 text-[12px] font-mono text-error hover:opacity-80 transition-opacity cursor-pointer group"
               >
                 {relatedExpanded
                   ? <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
