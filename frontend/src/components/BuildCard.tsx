@@ -101,6 +101,14 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
   const canAutoFix = analysis && !DIAGNOSTIC_TYPES.has(analysis.fix_type) &&
                      analysis.confidence >= CONFIDENCE_THRESHOLD && !fixResult && isLatestFailing
 
+  // Count related issues that are auto-fixable even if primary is diagnostic
+  const fixableRelatedCount = (analysis?.potential_issues ?? []).filter(p => {
+    if (p.fix_type === 'logic_error') return false
+    if (p.fix_type === 'fix_step_typo' && !p.correct_line) return false
+    return true
+  }).length
+  const showRelatedOnlyButton = !canAutoFix && fixableRelatedCount > 0 && !fixResult && isLatestFailing
+
   async function applyFix(
     credFields?: CredentialFields | null,
     resolvedCorrectStep?: string,
@@ -112,8 +120,23 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
 
     const isSelfConfigure = analysis.fix_type === 'configure_credential' && credFields === null
     const hasSelectedPotentials = (selectedPotentials?.length ?? 0) > 0
+    const skipPrimary = DIAGNOSTIC_TYPES.has(analysis.fix_type)
 
     try {
+      if (skipPrimary && !hasSelectedPotentials) {
+        return
+      }
+
+      if (skipPrimary) {
+        const list = selectedPotentials!
+        for (let i = 0; i < list.length; i++) {
+          const item = list[i]
+          const isLast = i === list.length - 1
+          await dispatchPotentialFixSilent(item.issue, item.credFields ?? null, !isLast)
+        }
+        return
+      }
+
       const body: Record<string, string | undefined> = {
         fix_type:     analysis.fix_type,
         job_name:     card.job,
@@ -385,8 +408,19 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
               ) : (
                 <div className="flex items-center gap-2 text-[12px] text-warning font-mono">
                   <AlertTriangle className="h-4 w-4" strokeWidth={2} />
-                  {DIAGNOSTIC_TYPES.has(analysis.fix_type) ? 'Requires manual action' : 'Low confidence — review recommended'}
+                  {DIAGNOSTIC_TYPES.has(analysis.fix_type) ? 'Primary fix is manual' : 'Low confidence — review recommended'}
                 </div>
+              )}
+              {showRelatedOnlyButton && (
+                <Button
+                  size="sm"
+                  onClick={() => setModalOpen(true)}
+                  disabled={fixing}
+                  className="gap-2 bg-warning hover:bg-warning/90 text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
+                >
+                  {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
+                  {fixing ? 'Fixing…' : `Fix ${fixableRelatedCount} related issue${fixableRelatedCount !== 1 ? 's' : ''}`}
+                </Button>
               )}
               {DIAGNOSTIC_TYPES.has(analysis.fix_type) && analysis.steps && analysis.steps.length > 0 && (
                 <button

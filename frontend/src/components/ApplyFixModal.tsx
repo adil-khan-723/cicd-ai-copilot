@@ -151,10 +151,13 @@ function resolvePlaceholders(text: string, values: Record<string, string>): stri
 }
 
 export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, onCancel }: Props) {
-  const meta = FIX_META[analysis.fix_type] ?? DEFAULT_META
+  const isDiagnostic = analysis.fix_type === 'diagnostic_only' || analysis.fix_type === 'missing_plugin'
+  const meta = isDiagnostic
+    ? { ...DEFAULT_META, label: 'Fix Related Issues', agentNote: 'Primary failure needs manual action — related issues will be patched automatically' }
+    : (FIX_META[analysis.fix_type] ?? DEFAULT_META)
   const overlayRef = useRef<HTMLDivElement>(null)
 
-  const isCredential = analysis.fix_type === 'configure_credential'
+  const isCredential = !isDiagnostic && analysis.fix_type === 'configure_credential'
 
   const typeFromLLM = (analysis.credential_type ?? 'secret_text') as 'secret_text' | 'username_password' | 'ssh_key'
   const [credType,    setCredType]    = useState<'secret_text' | 'username_password' | 'ssh_key'>(typeFromLLM)
@@ -315,10 +318,10 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                   </p>
                 </div>
 
-                {/* What will happen — steps */}
+                {/* What will happen — steps (manual steps for diagnostic, agent steps otherwise) */}
                 <div>
                   <p className="text-[10px] font-mono font-semibold text-text-muted uppercase tracking-[0.12em] mb-2.5">
-                    What the agent will do
+                    {isDiagnostic ? 'Manual steps for primary issue' : 'What the agent will do'}
                   </p>
                   <ol className="space-y-2">
                     {analysis.steps.map((step, i) => (
@@ -682,7 +685,18 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                 )}
 
                 <button
-                  disabled={!credFieldsFilled || !stepPlaceholdersFilled || !potentialCredsFilled}
+                  disabled={
+                    !credFieldsFilled ||
+                    !stepPlaceholdersFilled ||
+                    !potentialCredsFilled ||
+                    (isDiagnostic && potentialSelected.filter((s, i) => {
+                      if (!s) return false
+                      const p = potentialIssues[i]
+                      if (p.fix_type === 'logic_error') return false
+                      if (p.fix_type === 'fix_step_typo' && !p.correct_line) return false
+                      return true
+                    }).length === 0)
+                  }
                   onClick={() => {
                     const resolved = hasStepPlaceholders
                       ? resolvePlaceholders(correctStep, placeholderValues)
@@ -746,6 +760,10 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                       if (p.fix_type === 'fix_step_typo' && !p.correct_line) return false
                       return true
                     }).length
+                    if (isDiagnostic) {
+                      if (n === 0) return 'Nothing to apply'
+                      return `Apply ${n} Related Fix${n !== 1 ? 'es' : ''}`
+                    }
                     if (isCredential && n === 0) return 'Configure & Apply'
                     if (n === 0) return 'Accept & Apply Fix'
                     return `Apply ${1 + n} Fixes`
