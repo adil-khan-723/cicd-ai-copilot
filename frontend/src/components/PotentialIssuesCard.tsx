@@ -19,10 +19,10 @@ export function PotentialIssuesCard({ issues }: PotentialIssuesCardProps) {
   if (!issues || issues.length === 0) return null
 
   return (
-    <div className="rounded-xl border border-warning-border bg-warning-dim/40 overflow-hidden">
-      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-warning-border/40 bg-warning-dim/60">
-        <ShieldAlert className="h-3.5 w-3.5 text-warning shrink-0" strokeWidth={2} />
-        <span className="text-[11px] font-mono font-semibold text-warning uppercase tracking-[0.12em]">
+    <div className="rounded-xl border border-[rgba(180,100,80,0.12)] bg-[#fffcfa] overflow-hidden">
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[rgba(180,100,80,0.1)] bg-overlay/30">
+        <ShieldAlert className="h-3.5 w-3.5 text-text-muted shrink-0" strokeWidth={2} />
+        <span className="text-[11px] font-mono font-semibold text-text-base uppercase tracking-[0.12em]">
           Related Issues in This Stage ({issues.length})
         </span>
         <span className="ml-auto text-[10px] font-mono text-text-dim italic">
@@ -38,16 +38,16 @@ export function PotentialIssuesCard({ issues }: PotentialIssuesCardProps) {
           return (
             <div
               key={idx}
-              className="rounded-lg border border-warning-border/60 bg-white/60 px-3.5 py-3 space-y-2"
+              className="rounded-lg border border-[rgba(180,100,80,0.12)] bg-white px-3.5 py-3 space-y-2"
             >
               <div className="flex items-center gap-2">
                 <span className={cn(
                   'text-[9px] font-mono font-semibold uppercase tracking-[0.12em] px-1.5 py-0.5 rounded-md border',
                   issue.confidence === 'confirmed'
-                    ? 'text-warning bg-warning-dim border-warning-border'
+                    ? 'text-accent bg-accent-dim border-accent-border'
                     : issue.confidence === 'unverified'
-                    ? 'text-text-muted bg-overlay/40 border-accent-border/40'
-                    : 'text-accent bg-accent/10 border-accent/30'
+                    ? 'text-text-muted bg-overlay/40 border-[rgba(180,100,80,0.14)]'
+                    : 'text-text-muted bg-overlay/40 border-[rgba(180,100,80,0.14)]'
                 )}>
                   {issue.confidence === 'confirmed' ? 'confirmed' : issue.confidence === 'unverified' ? 'unverified' : 'llm analysis'}
                 </span>
@@ -56,7 +56,7 @@ export function PotentialIssuesCard({ issues }: PotentialIssuesCardProps) {
                   'ml-auto text-[9px] font-mono font-semibold uppercase tracking-[0.1em] px-1.5 py-0.5 rounded-md border',
                   fixable
                     ? 'text-success bg-success-dim border-success-border'
-                    : 'text-text-muted bg-overlay/40 border-accent-border/40'
+                    : 'text-text-muted bg-overlay/40 border-[rgba(180,100,80,0.14)]'
                 )}>
                   {fixable ? 'auto-fixable' : 'manual'}
                 </span>
@@ -64,7 +64,7 @@ export function PotentialIssuesCard({ issues }: PotentialIssuesCardProps) {
 
               <p className="text-[13px] text-text-primary leading-relaxed">{issue.issue}</p>
 
-              <pre className="text-[11px] font-mono text-text-base bg-overlay/40 border border-accent-border/30 rounded-md px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap">
+              <pre className="text-[11px] font-mono text-text-base bg-overlay/40 border border-[rgba(180,100,80,0.1)] rounded-md px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap">
                 {issue.line}
               </pre>
 
@@ -72,7 +72,7 @@ export function PotentialIssuesCard({ issues }: PotentialIssuesCardProps) {
                 <div className="pt-1">
                   <button
                     onClick={() => setOpenSuggestions(prev => ({ ...prev, [idx]: !open }))}
-                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold text-warning hover:text-warning/80 transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 text-[11px] font-mono font-semibold text-accent hover:text-accent-hi transition-colors cursor-pointer"
                   >
                     {open
                       ? <ChevronDown className="h-3 w-3" strokeWidth={2} />
@@ -84,7 +84,7 @@ export function PotentialIssuesCard({ issues }: PotentialIssuesCardProps) {
                     <ol className="mt-2 ml-1 space-y-1.5">
                       {issue.manual_steps!.map((step, i) => (
                         <li key={i} className="flex items-start gap-2.5 text-[12px] text-text-base leading-relaxed">
-                          <span className="shrink-0 mt-0.5 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-warning-dim border border-warning-border text-[10px] font-mono font-semibold text-warning">
+                          <span className="shrink-0 mt-0.5 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-accent-dim border border-accent-border text-[10px] font-mono font-semibold text-accent">
                             {i + 1}
                           </span>
                           <span>{step}</span>
