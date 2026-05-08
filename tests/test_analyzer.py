@@ -261,6 +261,36 @@ class TestPotentialIssuesParsing:
         assert len(result["potential_issues"]) == 1
         assert result["potential_issues"][0]["correct_line"] == "sh 'mvn clean verify'"
 
+    def test_parse_potential_issues_includes_manual_steps(self):
+        raw = '''{
+            "root_cause": "Tool missing",
+            "fix_suggestion": "x", "steps": [], "confidence": 0.9, "fix_type": "configure_tool",
+            "potential_issues": [
+                {
+                    "type": "logic",
+                    "line": "sh 'echo $UNSET_VAR'",
+                    "issue": "UNSET_VAR is never set",
+                    "fix_type": "logic_error",
+                    "manual_steps": ["Define UNSET_VAR in environment{} block", "Or pass it via parameters"]
+                }
+            ]
+        }'''
+        result = parse_analysis_response(raw)
+        assert result["potential_issues"][0]["manual_steps"] == [
+            "Define UNSET_VAR in environment{} block",
+            "Or pass it via parameters",
+        ]
+
+    def test_parse_potential_issues_manual_steps_omitted_when_absent(self):
+        raw = '''{
+            "root_cause": "x", "fix_suggestion": "y", "steps": [], "confidence": 0.9, "fix_type": "configure_tool",
+            "potential_issues": [
+                {"type": "syntax", "line": "sh 'mvn clen'", "issue": "Typo", "fix_type": "fix_step_typo", "correct_line": "sh 'mvn clean'"}
+            ]
+        }'''
+        result = parse_analysis_response(raw)
+        assert "manual_steps" not in result["potential_issues"][0]
+
     def test_parse_potential_issues_correct_line_optional(self):
         """correct_line missing for non-fix_step_typo (e.g. configure_credential) is fine."""
         raw = '''{

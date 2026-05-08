@@ -42,6 +42,7 @@ export interface PotentialIssue {
   credential_id?: string
   tool_ref?: string
   correct_line?: string
+  manual_steps?: string[]
 }
 
 export interface AnalysisCompleteEvent {

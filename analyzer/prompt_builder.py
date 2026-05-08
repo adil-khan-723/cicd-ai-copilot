@@ -28,7 +28,8 @@ Response schema:
       "line": "<exact Groovy snippet from the stage source that has the issue>",
       "issue": "<short description of the problem>",
       "fix_type": "<one of: configure_tool | configure_credential | fix_step_typo | pull_image | logic_error>",
-      "correct_line": "<the corrected version of 'line' — REQUIRED for fix_step_typo and pull_image so the agent can patch the Jenkinsfile. Omit for configure_credential and logic_error.>"
+      "correct_line": "<the corrected version of 'line' — REQUIRED for fix_step_typo and pull_image so the agent can patch the Jenkinsfile. Omit for configure_credential and logic_error.>",
+      "manual_steps": ["<imperative step 1>", "<imperative step 2>", ...]
     }
   ]
 }
@@ -44,6 +45,8 @@ potential_issues rules (CRITICAL — populate this array, do not merge findings 
 - correct_line is REQUIRED whenever fix_type is fix_step_typo or pull_image — it is the exact patched version of `line`. The agent uses it to rewrite the Jenkinsfile. Without it, the fix CANNOT be applied. Preserve indentation and surrounding syntax — change only what is wrong.
 - correct_line MUST be omitted (or empty) for configure_credential and logic_error — those fix types do not patch a line.
 - For configure_tool potential issues, correct_line is optional — the agent uses verification findings to determine the correct tool name automatically.
+- manual_steps is REQUIRED whenever fix_type is logic_error OR whenever a fix_step_typo issue lacks a confident correct_line. 2-4 short imperative sentences telling the user exactly how to fix it themselves (e.g. "Open Manage Jenkins → Tools", "Set MAVEN_HOME to /usr/share/maven"). Be specific — exact UI paths and file paths. The UI shows these as a numbered Suggestion list when the user clicks 'Show Suggestion'.
+- manual_steps is OPTIONAL for fix_step_typo when correct_line is provided, and for configure_tool / configure_credential — those are auto-fixable so steps aren't needed.
 - If genuinely no additional issues are found, return an empty array: "potential_issues": []
 - Maximum 5 entries — prioritize highest confidence findings
 - Do NOT include issues you are not reasonably confident about
