@@ -185,8 +185,13 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
       setSshUsername('')
       setPrivateKey('')
       setPlaceholderValues({})
-      // default: select every fixable potential, except logic_error
-      const sel = potentialIssues.map(p => p.fix_type !== 'logic_error')
+      // default: select every fixable potential, except logic_error and
+      // fix_step_typo without correct_line (LLM didn't provide a patch)
+      const sel = potentialIssues.map(p => {
+        if (p.fix_type === 'logic_error') return false
+        if (p.fix_type === 'fix_step_typo' && !p.correct_line) return false
+        return true
+      })
       setPotentialSelected(sel)
       const creds: Record<number, PotentialCredState> = {}
       potentialIssues.forEach((p, i) => {
@@ -507,6 +512,8 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                     {potentialIssues.map((p, i) => {
                       const selected = potentialSelected[i] ?? false
                       const isLogicOnly = p.fix_type === 'logic_error'
+                      const missingCorrectLine = p.fix_type === 'fix_step_typo' && !p.correct_line
+                      const isUnfixable = isLogicOnly || missingCorrectLine
                       const isCred = p.fix_type === 'configure_credential'
                       const credState = potentialCreds[i]
                       return (
@@ -522,8 +529,8 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                           <label className="flex items-start gap-2.5 cursor-pointer">
                             <input
                               type="checkbox"
-                              disabled={isLogicOnly}
-                              checked={selected && !isLogicOnly}
+                              disabled={isUnfixable}
+                              checked={selected && !isUnfixable}
                               onChange={e => {
                                 const next = [...potentialSelected]
                                 next[i] = e.target.checked
@@ -544,6 +551,9 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                                 <span className="text-[10px] font-mono text-text-muted uppercase">{p.type}</span>
                                 {isLogicOnly && (
                                   <span className="text-[10px] font-mono text-text-dim italic">manual review</span>
+                                )}
+                                {missingCorrectLine && (
+                                  <span className="text-[10px] font-mono text-text-dim italic">no patch — manual</span>
                                 )}
                               </div>
                               <p className="text-[12px] text-text-primary leading-relaxed">{p.issue}</p>
@@ -682,6 +692,7 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                     potentialIssues.forEach((issue, i) => {
                       if (!potentialSelected[i]) return
                       if (issue.fix_type === 'logic_error') return
+                      if (issue.fix_type === 'fix_step_typo' && !issue.correct_line) return
                       if (issue.fix_type === 'configure_credential') {
                         const s = potentialCreds[i]
                         if (!s) return
@@ -728,7 +739,13 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                 >
                   {meta.icon}
                   {(() => {
-                    const n = potentialSelected.filter((s, i) => s && potentialIssues[i].fix_type !== 'logic_error').length
+                    const n = potentialSelected.filter((s, i) => {
+                      if (!s) return false
+                      const p = potentialIssues[i]
+                      if (p.fix_type === 'logic_error') return false
+                      if (p.fix_type === 'fix_step_typo' && !p.correct_line) return false
+                      return true
+                    }).length
                     if (isCredential && n === 0) return 'Configure & Apply'
                     if (n === 0) return 'Accept & Apply Fix'
                     return `Apply ${1 + n} Fixes`

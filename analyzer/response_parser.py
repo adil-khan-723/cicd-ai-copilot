@@ -114,12 +114,16 @@ def _parse_potential_issues(raw_list) -> list:
             continue
         if fix_type not in VALID_POTENTIAL_FIX_TYPES:
             continue
-        result.append({
+        item = {
             "type": issue_type,
             "line": line,
             "issue": issue,
             "fix_type": fix_type,
-        })
+        }
+        correct_line = str(entry.get("correct_line", "")).strip()
+        if correct_line:
+            item["correct_line"] = correct_line
+        result.append(item)
     return result
 
 

@@ -214,6 +214,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
 
     if (issue.fix_type === 'fix_step_typo') {
       body.bad_step = issue.line
+      if (issue.correct_line) body.correct_step = issue.correct_line
     }
 
     await fetch('/api/fix', {

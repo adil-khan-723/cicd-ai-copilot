@@ -240,6 +240,39 @@ class TestPotentialIssuesParsing:
         result = parse_analysis_response(raw)
         assert result["potential_issues"] == []
 
+    def test_parse_potential_issues_includes_correct_line(self):
+        raw = '''{
+            "root_cause": "Tool missing",
+            "fix_suggestion": "Rename tool",
+            "steps": [],
+            "confidence": 0.9,
+            "fix_type": "configure_tool",
+            "potential_issues": [
+                {
+                    "type": "syntax",
+                    "line": "sh 'mvn clen verify'",
+                    "issue": "Typo",
+                    "fix_type": "fix_step_typo",
+                    "correct_line": "sh 'mvn clean verify'"
+                }
+            ]
+        }'''
+        result = parse_analysis_response(raw)
+        assert len(result["potential_issues"]) == 1
+        assert result["potential_issues"][0]["correct_line"] == "sh 'mvn clean verify'"
+
+    def test_parse_potential_issues_correct_line_optional(self):
+        """correct_line missing for non-fix_step_typo (e.g. configure_credential) is fine."""
+        raw = '''{
+            "root_cause": "Tool missing",
+            "fix_suggestion": "x", "steps": [], "confidence": 0.9, "fix_type": "configure_tool",
+            "potential_issues": [
+                {"type": "config", "line": "credentialsId: 'x'", "issue": "Missing", "fix_type": "configure_credential"}
+            ]
+        }'''
+        result = parse_analysis_response(raw)
+        assert "correct_line" not in result["potential_issues"][0]
+
     def test_parse_potential_issues_malformed_entry_skipped(self):
         raw = '''{
             "root_cause": "Some error",
