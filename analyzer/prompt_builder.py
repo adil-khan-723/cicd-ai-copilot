@@ -27,7 +27,8 @@ Response schema:
       "type": "<config | syntax | logic>",
       "line": "<exact Groovy snippet from the stage source that has the issue>",
       "issue": "<short description of the problem>",
-      "fix_type": "<one of: configure_tool | configure_credential | fix_step_typo | pull_image | logic_error>"
+      "fix_type": "<one of: configure_tool | configure_credential | fix_step_typo | pull_image | logic_error>",
+      "correct_line": "<the corrected version of 'line' — REQUIRED for fix_step_typo and pull_image so the agent can patch the Jenkinsfile. Omit for configure_credential and logic_error.>"
     }
   ]
 }
@@ -40,6 +41,9 @@ potential_issues rules (CRITICAL — populate this array, do not merge findings 
 - type=config: tool name (configure_tool), credential ID (configure_credential), or plugin reference that may not exist in Jenkins
 - type=syntax: invalid DSL step, wrong method name, bad argument, Groovy syntax error, mistyped shell sub-command like 'mvn clen' (fix_step_typo)
 - type=logic: wrong image tag (pull_image), wrong env var, bad shell command, incorrect branch name (logic_error)
+- correct_line is REQUIRED whenever fix_type is fix_step_typo or pull_image — it is the exact patched version of `line`. The agent uses it to rewrite the Jenkinsfile. Without it, the fix CANNOT be applied. Preserve indentation and surrounding syntax — change only what is wrong.
+- correct_line MUST be omitted (or empty) for configure_credential and logic_error — those fix types do not patch a line.
+- For configure_tool potential issues, correct_line is optional — the agent uses verification findings to determine the correct tool name automatically.
 - If genuinely no additional issues are found, return an empty array: "potential_issues": []
 - Maximum 5 entries — prioritize highest confidence findings
 - Do NOT include issues you are not reasonably confident about
@@ -76,7 +80,8 @@ Correct response:
       "type": "syntax",
       "line": "sh \"${mvnHome}/bin/mvn clen verify\"",
       "issue": "Maven goal 'clen' is a typo — should be 'clean'.",
-      "fix_type": "fix_step_typo"
+      "fix_type": "fix_step_typo",
+      "correct_line": "sh \"${mvnHome}/bin/mvn clean verify\""
     }
   ]
 }

@@ -41,6 +41,7 @@ export interface PotentialIssue {
   confidence: 'confirmed' | 'llm_only' | 'unverified'
   credential_id?: string
   tool_ref?: string
+  correct_line?: string
 }
 
 export interface AnalysisCompleteEvent {
