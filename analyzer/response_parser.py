@@ -123,6 +123,11 @@ def _parse_potential_issues(raw_list) -> list:
         correct_line = str(entry.get("correct_line", "")).strip()
         if correct_line:
             item["correct_line"] = correct_line
+        raw_manual = entry.get("manual_steps", [])
+        if isinstance(raw_manual, list):
+            manual_steps = [str(s).strip() for s in raw_manual if str(s).strip()]
+            if manual_steps:
+                item["manual_steps"] = manual_steps[:6]
         result.append(item)
     return result
 
