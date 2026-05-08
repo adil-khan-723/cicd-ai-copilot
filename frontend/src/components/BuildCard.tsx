@@ -98,8 +98,10 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
   const { analysis, fixResult, steps, dismissed } = card
   const isRunning  = !analysis && steps.some(s => s.status === 'running')
   const hasFailed  = steps.some(s => s.status === 'failed')
+  // Successful fix is terminal. Failed fix → allow retry (user fixes input + retries).
+  const fixSucceeded = fixResult?.success === true
   const canAutoFix = analysis && !DIAGNOSTIC_TYPES.has(analysis.fix_type) &&
-                     analysis.confidence >= CONFIDENCE_THRESHOLD && !fixResult && isLatestFailing
+                     analysis.confidence >= CONFIDENCE_THRESHOLD && !fixSucceeded && isLatestFailing
 
   // Count related issues that are auto-fixable even if primary is diagnostic
   const fixableRelatedCount = (analysis?.potential_issues ?? []).filter(p => {
@@ -107,7 +109,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
     if (p.fix_type === 'fix_step_typo' && !p.correct_line) return false
     return true
   }).length
-  const showRelatedOnlyButton = !canAutoFix && fixableRelatedCount > 0 && !fixResult && isLatestFailing
+  const showRelatedOnlyButton = !canAutoFix && fixableRelatedCount > 0 && !fixSucceeded && isLatestFailing
 
   async function applyFix(
     credFields?: CredentialFields | null,
@@ -393,7 +395,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
             </div>
           )}
 
-          {analysis && !fixResult && isLatestFailing && (
+          {analysis && !fixSucceeded && isLatestFailing && (
             <div className="flex items-center gap-2.5">
               {canAutoFix ? (
                 <Button
@@ -403,7 +405,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
                   className="gap-2 bg-success hover:bg-success/90 text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
                 >
                   {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
-                  {fixing ? 'Applying…' : 'Apply Fix'}
+                  {fixing ? 'Applying…' : (fixResult && !fixResult.success ? 'Retry Fix' : 'Apply Fix')}
                 </Button>
               ) : (
                 <div className="flex items-center gap-2 text-[12px] text-warning font-mono">
