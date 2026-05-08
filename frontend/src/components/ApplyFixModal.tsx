@@ -502,9 +502,9 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
 
                 {/* Related issues — select which to fix together */}
                 {potentialIssues.length > 0 && (
-                  <div className="rounded-xl border border-[rgba(180,100,80,0.1)] bg-[#fffcfa] px-4 py-3.5 space-y-3">
+                  <div className="rounded-xl border border-error-border bg-error-dim px-4 py-3.5 space-y-3">
                     <div>
-                      <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.12em]">
+                      <p className="text-[10px] font-mono font-semibold text-error uppercase tracking-[0.12em]">
                         Also Found in This Stage ({potentialIssues.length})
                       </p>
                       <p className="text-[11px] text-text-dim mt-0.5">
@@ -525,8 +525,8 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                           className={cn(
                             'rounded-lg border px-3 py-2.5 space-y-2 transition-colors',
                             selected
-                              ? 'border-[rgba(180,100,80,0.18)] bg-white'
-                              : 'border-[rgba(180,100,80,0.1)] bg-white/60 opacity-75',
+                              ? 'border-error-border bg-white'
+                              : 'border-error-border/60 bg-white/60 opacity-75',
                           )}
                         >
                           <label className="flex items-start gap-2.5 cursor-pointer">
@@ -539,14 +539,14 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                                 next[i] = e.target.checked
                                 setPotentialSelected(next)
                               }}
-                              className="mt-0.5 h-3.5 w-3.5 rounded accent-accent cursor-pointer disabled:cursor-not-allowed"
+                              className="mt-0.5 h-3.5 w-3.5 rounded accent-error cursor-pointer disabled:cursor-not-allowed"
                             />
                             <div className="flex-1 min-w-0 space-y-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className={cn(
                                   'text-[9px] font-mono font-semibold uppercase tracking-[0.1em] px-1.5 py-0.5 rounded-md border',
                                   p.confidence === 'confirmed'
-                                    ? 'text-accent bg-accent-dim border-accent-border'
+                                    ? 'text-error bg-error-dim border-error-border'
                                     : 'text-text-muted bg-overlay/50 border-[rgba(180,100,80,0.14)]'
                                 )}>
                                   {p.confidence === 'confirmed' ? 'confirmed' : p.confidence === 'unverified' ? 'unverified' : 'llm analysis'}
@@ -568,7 +568,7 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
 
                           {/* Inline cred fields when selected */}
                           {isCred && selected && credState && (
-                            <div className="ml-6 pl-3 border-l-2 border-[rgba(180,100,80,0.18)] space-y-2">
+                            <div className="ml-6 pl-3 border-l-2 border-error-border space-y-2">
                               <p className="text-[10px] font-mono font-semibold text-text-muted uppercase tracking-[0.1em]">
                                 Credential value for "{p.credential_id}"
                               </p>
