@@ -188,8 +188,7 @@ export default function App() {
   function dismissCard(key: string) {
     setCards(prev => {
       const next = new Map(prev)
-      const existing = next.get(key)
-      if (existing) next.set(key, { ...existing, dismissed: true })
+      next.delete(key)
       return next
     })
   }
