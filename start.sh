@@ -190,11 +190,28 @@ if [[ ! -d "$VENV_DIR" ]]; then
   info "Creating virtualenv in .venv ..."
   # Use python3.13 explicitly — python3.14+ breaks pydantic-core
   if command -v python3.13 &>/dev/null; then
-    python3.13 -m venv "$VENV_DIR"
+    PYBIN=python3.13
   elif command -v python3.12 &>/dev/null; then
-    python3.12 -m venv "$VENV_DIR"
+    PYBIN=python3.12
   else
-    python3 -m venv "$VENV_DIR"
+    PYBIN=python3
+  fi
+
+  # Capture stdout+stderr — python -m venv prints the ensurepip error to stdout.
+  set +e
+  VENV_OUT=$($PYBIN -m venv "$VENV_DIR" 2>&1)
+  VENV_RC=$?
+  set -e
+  if [[ $VENV_RC -ne 0 ]]; then
+    if [[ "$VENV_OUT" == *"ensurepip"* ]]; then
+      die "Python venv module missing on this system. Install it:
+    Debian/Ubuntu: sudo apt-get install -y ${PYBIN}-venv python3-pip
+    Fedora/RHEL:   sudo dnf install -y python3-virtualenv python3-pip
+    Arch:          sudo pacman -S python python-pip
+  Then re-run ./start.sh"
+    fi
+    echo "$VENV_OUT" >&2
+    die "Failed to create virtualenv with $PYBIN"
   fi
 fi
 # shellcheck disable=SC1091
