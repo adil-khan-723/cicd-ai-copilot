@@ -198,6 +198,24 @@ case "$OS_TYPE" in
     fi ;;
 esac
 
+# Refresh package index once per run. Cloud VMs / fresh AMIs often have a
+# stale or empty apt cache, which makes apt-cache + apt install fail to find
+# packages that ARE in the repos. Run this lazily before the first install
+# attempt and before any apt-cache lookup.
+_PKG_INDEX_REFRESHED=false
+_pkg_index_refresh() {
+  [[ "$_PKG_INDEX_REFRESHED" == "true" ]] && return 0
+  case "$PKG_MGR" in
+    apt)    info "Refreshing apt package index..."; sudo apt-get update -qq 2>&1 | tail -2 ;;
+    dnf)    info "Refreshing dnf package index...";  sudo dnf -q makecache 2>&1 | tail -2 || true ;;
+    yum)    info "Refreshing yum package index...";  sudo yum -q makecache 2>&1 | tail -2 || true ;;
+    pacman) info "Refreshing pacman package index..."; sudo pacman -Sy --noconfirm 2>&1 | tail -2 || true ;;
+    apk)    info "Refreshing apk package index...";  sudo apk update 2>&1 | tail -2 || true ;;
+    brew)   true ;;  # brew updates implicitly
+  esac
+  _PKG_INDEX_REFRESHED=true
+}
+
 # offer_install <human-name> <distro:packages> ...
 # Each distro arg is "key:packages" — apt|dnf|yum|pacman|apk|brew
 # Returns 0 if user accepted and install succeeded; 1 otherwise.
@@ -233,6 +251,7 @@ _offer_install() {
       return 1
     fi
   fi
+  _pkg_index_refresh
   # shellcheck disable=SC2086
   if $PKG_INSTALL $pkgs; then
     ok "Installed $name"
@@ -266,9 +285,16 @@ if ! _pick_python; then
   # Distro recipes — apt prefers python3.12 (Ubuntu 24.04+), falls back to python3.11 on 22.04
   _PY_PKG_APT="python3.12 python3.12-venv python3-pip"
   if [[ "$PKG_MGR" == "apt" ]]; then
+    # Refresh cache first — fresh cloud VMs often have empty apt lists
+    _pkg_index_refresh
     if ! apt-cache show python3.12 &>/dev/null; then
-      _PY_PKG_APT="python3.11 python3.11-venv python3-pip"
-      info "python3.12 not in apt repos — using python3.11 instead"
+      if apt-cache show python3.11 &>/dev/null; then
+        _PY_PKG_APT="python3.11 python3.11-venv python3-pip"
+        info "python3.12 not in apt repos — using python3.11 instead"
+      else
+        warn "Neither python3.12 nor python3.11 in apt repos. You may need to add a deadsnakes PPA:"
+        warn "  sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update"
+      fi
     fi
   fi
   _offer_install "Python 3.11+" \
@@ -285,15 +311,27 @@ fi
 ok "Python $PYVER ($PYBIN)"
 
 # ── venv module ──
-if ! $PYBIN -c "import venv" &>/dev/null; then
-  _offer_install "Python venv module" \
-    "apt:${PYBIN}-venv" \
-    "dnf:python3-virtualenv" \
-    "yum:python3-virtualenv" \
-    "pacman:python" \
-    "apk:py3-virtualenv" \
-    "brew:python@3.12" || die "Python venv module is required."
+# import venv works even if ensurepip is missing (pip-less venv stdlib),
+# but `python -m venv` needs ensurepip too. Test full path with a throwaway venv.
+_VENV_TEST_DIR="$(mktemp -d -t venvchk.XXXXXX)"
+if ! $PYBIN -m venv "$_VENV_TEST_DIR" &>/tmp/_venv_probe; then
+  rm -rf "$_VENV_TEST_DIR"
+  if grep -q "ensurepip" /tmp/_venv_probe 2>/dev/null; then
+    _offer_install "Python venv module" \
+      "apt:${PYBIN}-venv" \
+      "dnf:python3-virtualenv" \
+      "yum:python3-virtualenv" \
+      "pacman:python" \
+      "apk:py3-virtualenv" \
+      "brew:python@3.12" || die "Python venv module is required."
+  else
+    cat /tmp/_venv_probe >&2
+    die "venv probe failed for $PYBIN"
+  fi
+else
+  rm -rf "$_VENV_TEST_DIR"
 fi
+rm -f /tmp/_venv_probe
 
 # ── pip ──
 if ! $PYBIN -m pip --version &>/dev/null; then
