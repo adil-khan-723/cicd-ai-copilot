@@ -361,17 +361,27 @@ _install_python_via_uv() {
     return 1
   fi
 
-  # Symlink the uv-managed Python into ~/.local/bin so the validator finds it.
-  local uv_py
-  uv_py="$(uv python find "${target_ver}" 2>/dev/null || true)"
+  # Resolve uv's standalone Python binary. 'uv python find' picks up local
+  # virtualenvs first (wrong — they shadow uv-managed installs), so we look
+  # under uv's install root instead.
+  local uv_py uv_root
+  uv_root="$(uv python dir 2>/dev/null || echo "$HOME/.local/share/uv/python")"
+  # Glob for the cpython-<target_ver>-* directory, prefer newest.
+  uv_py=$(ls -td "$uv_root"/cpython-${target_ver}*-${ARCH:-$(uname -m)}-*/bin/python${target_ver} 2>/dev/null | head -1)
   if [[ -z "$uv_py" || ! -x "$uv_py" ]]; then
-    warn "uv reported success but no python ${target_ver} binary found."
+    # Fallback: glob without arch, take newest match
+    uv_py=$(ls -td "$uv_root"/cpython-${target_ver}*/bin/python${target_ver} 2>/dev/null | head -1)
+  fi
+  if [[ -z "$uv_py" || ! -x "$uv_py" ]]; then
+    warn "uv reported success but no python ${target_ver} binary found under $uv_root"
     return 1
   fi
   mkdir -p "$HOME/.local/bin"
   ln -sf "$uv_py" "$HOME/.local/bin/python${target_ver}"
-  ln -sf "$uv_py" "$HOME/.local/bin/python3.${target_ver#3.}"
+  ln -sf "$uv_py" "$HOME/.local/bin/python3"
   export PATH="$HOME/.local/bin:$PATH"
+  # hash -r forces bash to flush its command-path cache so command -v sees the new symlink
+  hash -r 2>/dev/null || true
   ok "Python ${target_ver} installed via uv at $uv_py"
   return 0
 }
