@@ -67,6 +67,11 @@ def _validate(data: dict) -> dict:
         logger.warning("Unknown fix_type '%s', defaulting to diagnostic_only", fix_type)
         fix_type = "diagnostic_only"
 
+    # missing_plugin requires admin install + Jenkins restart — no safe auto-fix.
+    # Coerce to diagnostic_only so UI shows the manual steps instead of a broken Apply Fix button.
+    if fix_type == "missing_plugin":
+        fix_type = "diagnostic_only"
+
     # Enforce: low confidence → diagnostic_only
     if confidence < 0.6:
         fix_type = "diagnostic_only"
