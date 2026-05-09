@@ -12,6 +12,7 @@ OPEN_BROWSER=true
 FORCE_UI_BUILD=false
 WORKERS=1
 SETUP_JENKINS=false
+ASSUME_YES=false
 
 # ── Colours ─────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -34,9 +35,12 @@ while [[ $# -gt 0 ]]; do
     --build-ui)      FORCE_UI_BUILD=true; shift ;;
     --workers)       WORKERS="$2"; shift 2 ;;
     --setup-jenkins) SETUP_JENKINS=true; shift ;;
+    -y|--yes)        ASSUME_YES=true; shift ;;
     -h|--help)
-      echo "Usage: ./start.sh [--port 8000] [--no-browser] [--build-ui] [--workers N]"
+      echo "Usage: ./start.sh [--port 8000] [--no-browser] [--build-ui] [--workers N] [--yes]"
       echo "       ./start.sh --setup-jenkins   # wire Jenkins to send build events here"
+      echo ""
+      echo "  --yes / -y   Auto-accept all prereq install prompts (CI / unattended)"
       exit 0 ;;
     *) die "Unknown argument: $1" ;;
   esac
@@ -171,53 +175,153 @@ GROOVY
   exit 0
 fi
 
-# ── 1. Python ────────────────────────────────────────────────
-# Pick first viable interpreter from candidates. Some distros (RHEL/AlmaLinux 9)
-# ship python3 -> 3.9 by default but offer python3.11/3.12/3.13 alongside.
-# We pin <= 3.13 because pydantic-core wheels for 3.14+ are not always available.
-info "Checking Python..."
-PYBIN=""
-PYVER=""
-for _candidate in python3.13 python3.12 python3.11 python3; do
-  if command -v "$_candidate" &>/dev/null; then
-    _v=$("$_candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
-    _maj=$(echo "$_v" | cut -d. -f1)
-    _min=$(echo "$_v" | cut -d. -f2)
-    if [[ "$_maj" -eq 3 && "$_min" -ge 11 && "$_min" -le 13 ]]; then
-      PYBIN="$_candidate"
-      PYVER="$_v"
-      break
+# ── 1. Prereq validator ──────────────────────────────────────
+# Detects host OS + package manager. For each missing prereq, prompts
+# (default Y) to run the right install command. Skips silently if present.
+# Non-interactive shells (CI) get clear error + exit; never auto-install
+# without confirmation.
+
+OS_TYPE="$(uname -s)"
+PKG_MGR=""
+PKG_INSTALL=""    # full prefix incl sudo where applicable
+case "$OS_TYPE" in
+  Darwin)
+    if command -v brew &>/dev/null; then
+      PKG_MGR="brew"; PKG_INSTALL="brew install"
+    fi ;;
+  Linux)
+    if   command -v apt-get &>/dev/null; then PKG_MGR="apt";    PKG_INSTALL="sudo apt-get install -y"
+    elif command -v dnf     &>/dev/null; then PKG_MGR="dnf";    PKG_INSTALL="sudo dnf install -y"
+    elif command -v yum     &>/dev/null; then PKG_MGR="yum";    PKG_INSTALL="sudo yum install -y"
+    elif command -v pacman  &>/dev/null; then PKG_MGR="pacman"; PKG_INSTALL="sudo pacman -S --noconfirm"
+    elif command -v apk     &>/dev/null; then PKG_MGR="apk";    PKG_INSTALL="sudo apk add"
+    fi ;;
+esac
+
+# offer_install <human-name> <distro:packages> ...
+# Each distro arg is "key:packages" — apt|dnf|yum|pacman|apk|brew
+# Returns 0 if user accepted and install succeeded; 1 otherwise.
+_offer_install() {
+  local name="$1"; shift
+  local pkgs=""
+  for spec in "$@"; do
+    if [[ "$spec" == "${PKG_MGR}:"* ]]; then pkgs="${spec#*:}"; break; fi
+  done
+
+  if [[ -z "$PKG_MGR" ]]; then
+    warn "Cannot install '$name' automatically — no supported package manager detected on $OS_TYPE."
+    return 1
+  fi
+  if [[ -z "$pkgs" ]]; then
+    warn "No install recipe for '$name' on $PKG_MGR. Install it manually and re-run."
+    return 1
+  fi
+
+  echo ""
+  echo -e "  ${YLW}Missing:${RST} $name"
+  echo -e "  ${DIM}Will run:${RST} $PKG_INSTALL $pkgs"
+  if [[ "$ASSUME_YES" == "true" ]]; then
+    info "Auto-accept (--yes flag) — installing $name"
+  elif [[ ! -t 0 ]]; then
+    warn "Non-interactive shell — cannot prompt. Run the command above manually, or re-run with --yes."
+    return 1
+  else
+    read -r -p "  Install now? [Y/n] " _ans
+    _ans="$(echo "${_ans:-Y}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$_ans" != "y" && "$_ans" != "yes" ]]; then
+      warn "Skipped install of '$name'. start.sh may fail later."
+      return 1
     fi
   fi
-done
-unset _candidate _v _maj _min
+  # shellcheck disable=SC2086
+  if $PKG_INSTALL $pkgs; then
+    ok "Installed $name"
+    return 0
+  else
+    warn "Install of '$name' failed. Check output above."
+    return 1
+  fi
+}
 
-if [[ -z "$PYBIN" ]]; then
-  die "Python 3.11, 3.12 or 3.13 not found. Install one:
-    Debian/Ubuntu: sudo apt-get install -y python3.12 python3.12-venv python3-pip
-    Fedora/RHEL:   sudo dnf install -y python3.12 python3.12-pip
-    macOS:         brew install python@3.12"
+# Pick first viable Python (3.11-3.13). Cap at 3.13 — pydantic-core wheels for 3.14+ are unreliable.
+_pick_python() {
+  PYBIN=""; PYVER=""
+  for c in python3.12 python3.13 python3.11 python3; do
+    if command -v "$c" &>/dev/null; then
+      local v maj min
+      v=$("$c" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
+      maj=$(echo "$v" | cut -d. -f1); min=$(echo "$v" | cut -d. -f2)
+      if [[ "$maj" -eq 3 && "$min" -ge 11 && "$min" -le 13 ]]; then
+        PYBIN="$c"; PYVER="$v"; return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+info "Validating prereqs (will prompt for any missing)..."
+
+# ── Python 3.11-3.13 ──
+if ! _pick_python; then
+  # Distro recipes — apt prefers python3.12 (Ubuntu 24.04+), falls back to python3.11 on 22.04
+  _PY_PKG_APT="python3.12 python3.12-venv python3-pip"
+  if [[ "$PKG_MGR" == "apt" ]]; then
+    if ! apt-cache show python3.12 &>/dev/null; then
+      _PY_PKG_APT="python3.11 python3.11-venv python3-pip"
+      info "python3.12 not in apt repos — using python3.11 instead"
+    fi
+  fi
+  _offer_install "Python 3.11+" \
+    "apt:$_PY_PKG_APT" \
+    "dnf:python3.12 python3.12-pip" \
+    "yum:python3.12 python3.12-pip" \
+    "pacman:python python-pip" \
+    "apk:python3 py3-pip py3-virtualenv" \
+    "brew:python@3.12" || die "Python 3.11+ is required."
+  if ! _pick_python; then
+    die "Python 3.11-3.13 still not detected after install. Try installing manually."
+  fi
 fi
 ok "Python $PYVER ($PYBIN)"
+
+# ── venv module ──
+if ! $PYBIN -c "import venv" &>/dev/null; then
+  _offer_install "Python venv module" \
+    "apt:${PYBIN}-venv" \
+    "dnf:python3-virtualenv" \
+    "yum:python3-virtualenv" \
+    "pacman:python" \
+    "apk:py3-virtualenv" \
+    "brew:python@3.12" || die "Python venv module is required."
+fi
+
+# ── pip ──
+if ! $PYBIN -m pip --version &>/dev/null; then
+  _offer_install "pip" \
+    "apt:python3-pip" \
+    "dnf:python3-pip" \
+    "yum:python3-pip" \
+    "pacman:python-pip" \
+    "apk:py3-pip" \
+    "brew:python@3.12" || die "pip is required."
+fi
+
+# ── curl (used by webhook health check + Jenkins setup) ──
+if ! command -v curl &>/dev/null; then
+  _offer_install "curl" \
+    "apt:curl" "dnf:curl" "yum:curl" "pacman:curl" "apk:curl" "brew:curl" \
+    || warn "curl missing — health checks will not work."
+fi
 
 # ── 2. Virtualenv ────────────────────────────────────────────
 VENV_DIR=".venv"
 if [[ ! -d "$VENV_DIR" ]]; then
   info "Creating virtualenv in .venv ..."
-
-  # Capture stdout+stderr — python -m venv prints the ensurepip error to stdout.
   set +e
   VENV_OUT=$($PYBIN -m venv "$VENV_DIR" 2>&1)
   VENV_RC=$?
   set -e
   if [[ $VENV_RC -ne 0 ]]; then
-    if [[ "$VENV_OUT" == *"ensurepip"* ]]; then
-      die "Python venv module missing on this system. Install it:
-    Debian/Ubuntu: sudo apt-get install -y ${PYBIN}-venv python3-pip
-    Fedora/RHEL:   sudo dnf install -y python3-virtualenv python3-pip
-    Arch:          sudo pacman -S python python-pip
-  Then re-run ./start.sh"
-    fi
     echo "$VENV_OUT" >&2
     die "Failed to create virtualenv with $PYBIN"
   fi
@@ -302,58 +406,48 @@ else warn "JENKINS_URL not set — configure via Settings in the UI"; fi
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then ok "GitHub token set"
 else warn "GITHUB_TOKEN not set — Copilot commit mode disabled"; fi
 
-# ── 4b. Redis cache (optional, persistent LLM response cache) ────────────────
-_try_start_redis() {
-  if command -v redis-server &>/dev/null; then
-    redis-server --daemonize yes --loglevel warning &>/dev/null && sleep 1
-    if redis-cli ping &>/dev/null 2>&1; then
-      ok "Redis started (local install)"
-      export REDIS_URL="redis://localhost:6379"
-      return 0
-    fi
-  fi
-  return 1
-}
-
-_install_redis() {
-  OS_TYPE="$(uname -s)"
-  case "$OS_TYPE" in
-    Darwin)
-      if command -v brew &>/dev/null; then
-        info "Installing Redis via Homebrew..."
-        brew install redis -q && return 0
-      fi ;;
-    Linux)
-      if command -v apt-get &>/dev/null; then
-        info "Installing Redis via apt..."
-        sudo apt-get install -y -q redis-server && return 0
-      elif command -v yum &>/dev/null; then
-        info "Installing Redis via yum..."
-        sudo yum install -y -q redis && return 0
-      fi ;;
-  esac
-  return 1
-}
-
+# ── 4b. Redis cache (optional) ───────────────────────────────
+# Already-running Redis -> use it. Else offer install via unified validator
+# (default N — purely optional). Falls back to in-memory cache silently.
 REDIS_URL="${REDIS_URL:-}"
 if [[ -z "$REDIS_URL" ]]; then
-  # Check if Redis already running (with -t timeout so we never hang on a dead socket)
   if command -v redis-cli &>/dev/null && redis-cli -t 2 ping &>/dev/null 2>&1; then
     ok "Redis already running"
     export REDIS_URL="redis://localhost:6379"
   elif [[ ! -t 0 ]]; then
-    # Non-interactive shell (CI / piped stdin) — never prompt; fall back silently
     info "Skipping Redis (non-interactive) — using in-memory cache"
   else
     echo ""
-    echo -e "${YLW}Redis not found.${RST} Install it for persistent LLM response caching (24hr TTL)?"
-    echo -e "${DIM}  Without Redis: in-memory cache only (lost on restart)${RST}"
-    read -r -p "  Install Redis? [y/N] " _redis_ans
-    if [[ "$(echo "$_redis_ans" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
-      if _install_redis && _try_start_redis; then
-        ok "Redis ready — persistent cache enabled"
+    echo -e "  ${YLW}Optional:${RST} Redis (persistent LLM response cache, 24hr TTL)"
+    echo -e "  ${DIM}Without Redis: in-memory cache only (lost on restart)${RST}"
+    read -r -p "  Install Redis? [y/N] " _ans
+    _ans="$(echo "${_ans:-N}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$_ans" == "y" || "$_ans" == "yes" ]]; then
+      _redis_pkg=""
+      case "$PKG_MGR" in
+        apt|dnf|yum) _redis_pkg="redis" ;;
+        brew)        _redis_pkg="redis" ;;
+        pacman)      _redis_pkg="redis" ;;
+        apk)         _redis_pkg="redis" ;;
+      esac
+      if [[ -n "$PKG_MGR" && -n "$_redis_pkg" ]]; then
+        # apt package is named redis-server
+        [[ "$PKG_MGR" == "apt" ]] && _redis_pkg="redis-server"
+        # shellcheck disable=SC2086
+        if $PKG_INSTALL $_redis_pkg; then
+          ok "Installed Redis"
+          if command -v redis-server &>/dev/null; then
+            redis-server --daemonize yes --loglevel warning &>/dev/null && sleep 1
+            if redis-cli -t 2 ping &>/dev/null 2>&1; then
+              export REDIS_URL="redis://localhost:6379"
+              ok "Redis started"
+            fi
+          fi
+        else
+          warn "Redis install failed — using in-memory cache"
+        fi
       else
-        warn "Redis install failed — using in-memory cache"
+        warn "No package manager support for Redis on $OS_TYPE — using in-memory cache"
       fi
     else
       info "Skipping Redis — using in-memory cache"
