@@ -526,8 +526,25 @@ if [[ ! -f ".env" ]]; then
   if [[ -f ".env.example" ]]; then
     info "No .env found — copying from .env.example"
     cp .env.example .env
-    warn ".env created from template. Edit it and re-run, or use the setup wizard at http://localhost:${PORT}"
-    exit 1
+    if [[ "$ASSUME_YES" == "true" ]]; then
+      info ".env created from template — proceeding (configure Jenkins/LLM via Settings UI at http://localhost:${PORT})"
+    else
+      warn ".env created from template."
+      warn "  Edit it now to set JENKINS_URL/ANTHROPIC_API_KEY etc., or"
+      warn "  press Enter to start the server with defaults and configure via Settings UI."
+      if [[ -t 0 ]]; then
+        read -r -p "  Continue with default .env? [Y/n] " _ans
+        _ans="$(echo "${_ans:-Y}" | tr '[:upper:]' '[:lower:]')"
+        if [[ "$_ans" != "y" && "$_ans" != "yes" ]]; then
+          info "Edit .env then re-run ./start.sh"
+          exit 0
+        fi
+      else
+        # Non-interactive without --yes: behave as before (exit so user notices)
+        warn "Non-interactive shell — exiting. Edit .env or pass --yes to proceed with defaults."
+        exit 1
+      fi
+    fi
   else
     die ".env not found and no .env.example to copy from."
   fi
