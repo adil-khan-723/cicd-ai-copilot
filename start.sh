@@ -237,8 +237,8 @@ set -o allexport
 source ".env"
 set +o allexport
 
-# Fallback: load Anthropic key from macOS Keychain if not set in .env
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+# Fallback: load Anthropic key from macOS Keychain if not set in .env (no-op on Linux/Windows)
+if [[ -z "${ANTHROPIC_API_KEY:-}" && "$(uname -s)" == "Darwin" ]] && command -v security &>/dev/null; then
   _kc_key=$(security find-generic-password -s "anthropic" -w 2>/dev/null || true)
   if [[ -n "$_kc_key" ]]; then
     export ANTHROPIC_API_KEY="$_kc_key"
@@ -312,10 +312,13 @@ _install_redis() {
 
 REDIS_URL="${REDIS_URL:-}"
 if [[ -z "$REDIS_URL" ]]; then
-  # Check if Redis already running
-  if redis-cli ping &>/dev/null 2>&1; then
+  # Check if Redis already running (with -t timeout so we never hang on a dead socket)
+  if command -v redis-cli &>/dev/null && redis-cli -t 2 ping &>/dev/null 2>&1; then
     ok "Redis already running"
     export REDIS_URL="redis://localhost:6379"
+  elif [[ ! -t 0 ]]; then
+    # Non-interactive shell (CI / piped stdin) — never prompt; fall back silently
+    info "Skipping Redis (non-interactive) — using in-memory cache"
   else
     echo ""
     echo -e "${YLW}Redis not found.${RST} Install it for persistent LLM response caching (24hr TTL)?"
@@ -414,7 +417,10 @@ else
 fi
 
 # ── 7. Port check ────────────────────────────────────────────
-if lsof -iTCP:"$PORT" -sTCP:LISTEN &>/dev/null; then
+# lsof is the most reliable on macOS/Linux. Skip silently if not available
+# (e.g. minimal Linux containers, Windows Git Bash) — uvicorn will fail loudly
+# below if the port is taken, which is acceptable in that environment.
+if command -v lsof &>/dev/null && lsof -iTCP:"$PORT" -sTCP:LISTEN &>/dev/null; then
   warn "Port $PORT in use — stopping existing process..."
   PID=$(lsof -ti TCP:"$PORT" -sTCP:LISTEN | head -1)
   if [[ -n "$PID" ]]; then
@@ -429,8 +435,18 @@ info "Starting server on http://localhost:${PORT}"
 echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
 echo ""
 
+_open_browser() {
+  local url="$1"
+  case "$(uname -s)" in
+    Darwin)         open "$url" 2>/dev/null ;;
+    Linux)          xdg-open "$url" 2>/dev/null ;;
+    MINGW*|CYGWIN*|MSYS*) start "$url" 2>/dev/null ;;
+    *)              true ;;  # silent on unknown OS
+  esac
+}
+
 if [[ "$OPEN_BROWSER" == "true" ]]; then
-  ( sleep 2 && open "http://localhost:${PORT}" 2>/dev/null || true ) &
+  ( sleep 2 && _open_browser "http://localhost:${PORT}" || true ) &
 fi
 
 exec python -m uvicorn webhook.server:app \

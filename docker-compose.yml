@@ -1,14 +1,19 @@
 # Docker Compose — DevOps AI Agent
 #
-# Dev  (hot-reload, mounts source):  docker-compose up
-# Prod (built image, no mount):      docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+# Dev  (hot-reload, mounts source):  docker compose up
+# Prod (built image, no mount):      docker compose -f docker-compose.yml -f docker-compose.prod.yml up
 #
 # Prerequisites:
 #   cp .env.example .env  # fill in tokens
-#   docker-compose up
+#   docker compose up
 #
 # Data directory (profiles, audit log):
-#   Default: ~/.devops-ai/  Override: DATA_DIR=/your/path in .env
+#   Default: a named docker volume `devops_ai_data`
+#   Override with absolute host path: DATA_DIR=/abs/path in .env
+#   (Do NOT use ~ — compose env interpolation does not expand it.)
+#
+# Linux native Docker users: extra_hosts maps host.docker.internal to the host
+# automatically. Docker Desktop (Mac/Win) ignores this since it already provides it.
 
 services:
   webhook:
@@ -17,19 +22,21 @@ services:
       - "${WEBHOOK_PORT:-8000}:8000"
     env_file: .env
     environment:
-      # Override localhost URLs so containers reach the host machine (Mac/Windows)
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL_DOCKER:-http://host.docker.internal:11434}
       JENKINS_URL: ${JENKINS_URL_DOCKER:-http://host.docker.internal:8080}
       WEBHOOK_HOST: "0.0.0.0"
       REDIS_URL: "redis://redis:6379"
       DATA_DIR: "/data"
+    extra_hosts:
+      # No-op on Docker Desktop (already provided), required on Linux native Docker
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
     command: uvicorn webhook.server:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app                      # live source mount for --reload
-      - ${DATA_DIR:-~/.devops-ai}:/data   # persistent profiles + audit log
+      - ${DATA_DIR:-devops_ai_data}:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -41,7 +48,8 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # Configurable so multiple stacks can coexist on the same host
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -53,3 +61,4 @@ services:
 
 volumes:
   redis_data:
+  devops_ai_data:
