@@ -102,6 +102,8 @@ interface Props {
     selectedPotentials?: SelectedPotential[],
   ) => void
   onCancel: () => void
+  /** 'fix' = full fix flow. 'suggestion' = read-only manual steps view. */
+  mode?: 'fix' | 'suggestion'
 }
 
 type PotentialCredState = {
@@ -150,14 +152,18 @@ function resolvePlaceholders(text: string, values: Record<string, string>): stri
   return text.replace(_PLACEHOLDER_RE, (_, key) => values[key] ?? `<${key}>`)
 }
 
-export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, onCancel }: Props) {
+export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, onCancel, mode = 'fix' }: Props) {
   const isDiagnostic = analysis.fix_type === 'diagnostic_only' || analysis.fix_type === 'missing_plugin'
-  const meta = isDiagnostic
+  const isSuggestionOnly = mode === 'suggestion'
+  const meta = isSuggestionOnly
+    ? { ...DEFAULT_META, label: 'Manual Fix Required', agentNote: 'No automated fix available — follow the steps below to resolve manually' }
+    : isDiagnostic
     ? { ...DEFAULT_META, label: 'Fix Related Issues', agentNote: 'Primary failure needs manual action — related issues will be patched automatically' }
     : (FIX_META[analysis.fix_type] ?? DEFAULT_META)
   const overlayRef = useRef<HTMLDivElement>(null)
+  const [stepsCopied, setStepsCopied] = useState(false)
 
-  const isCredential = !isDiagnostic && analysis.fix_type === 'configure_credential'
+  const isCredential = !isDiagnostic && !isSuggestionOnly && analysis.fix_type === 'configure_credential'
 
   const typeFromLLM = (analysis.credential_type ?? 'secret_text') as 'secret_text' | 'username_password' | 'ssh_key'
   const [credType,    setCredType]    = useState<'secret_text' | 'username_password' | 'ssh_key'>(typeFromLLM)
@@ -501,7 +507,7 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                 </div>
 
                 {/* Related issues — select which to fix together */}
-                {potentialIssues.length > 0 && (
+                {!isSuggestionOnly && potentialIssues.length > 0 && (
                   <div className="rounded-xl border border-error-border bg-error-dim px-4 py-3.5 space-y-3">
                     <div>
                       <p className="text-[10px] font-mono font-semibold text-error uppercase tracking-[0.12em]">
@@ -647,17 +653,51 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                   </div>
                 )}
 
-                {/* Warning note */}
-                <div className="flex items-start gap-2.5 rounded-xl border border-[rgba(176,125,42,0.2)] bg-warning-dim px-3.5 py-3">
-                  <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 mt-0.5" strokeWidth={2} />
-                  <p className="text-[12px] text-warning leading-relaxed">
-                    This action will modify Jenkins configuration and retrigger the job.
-                    It cannot be automatically undone.
-                  </p>
-                </div>
+                {/* Warning note (hidden in suggestion mode — no action will be taken) */}
+                {!isSuggestionOnly && (
+                  <div className="flex items-start gap-2.5 rounded-xl border border-[rgba(176,125,42,0.2)] bg-warning-dim px-3.5 py-3">
+                    <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 mt-0.5" strokeWidth={2} />
+                    <p className="text-[12px] text-warning leading-relaxed">
+                      This action will modify Jenkins configuration and retrigger the job.
+                      It cannot be automatically undone.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Footer */}
+              {isSuggestionOnly ? (
+                <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-[rgba(180,100,80,0.1)] bg-[#fffcfa]">
+                  <button
+                    onClick={() => {
+                      const text = analysis.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')
+                      navigator.clipboard.writeText(text).then(() => {
+                        setStepsCopied(true)
+                        setTimeout(() => setStepsCopied(false), 2000)
+                      })
+                    }}
+                    className={cn(
+                      'h-9 px-4 rounded-xl text-[12px] font-semibold font-sans',
+                      'border border-[rgba(180,100,80,0.18)] text-text-muted bg-white',
+                      'hover:bg-overlay/60 hover:text-text-base hover:border-[rgba(180,100,80,0.28)]',
+                      'transition-all duration-150 cursor-pointer flex items-center gap-1.5',
+                    )}
+                  >
+                    <CheckCircle2 className={cn('h-3.5 w-3.5', stepsCopied ? 'text-success' : 'opacity-0')} strokeWidth={2} />
+                    {stepsCopied ? 'Copied!' : 'Copy Steps'}
+                  </button>
+                  <button
+                    onClick={onCancel}
+                    className={cn(
+                      'h-9 px-5 rounded-xl text-[13px] font-bold font-sans',
+                      'flex items-center gap-2 text-white shadow-sm bg-accent hover:bg-accent-hi',
+                      'transition-all duration-150 cursor-pointer active:scale-[0.98]',
+                    )}
+                  >
+                    Close
+                  </button>
+                </div>
+              ) : (
               <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-[rgba(180,100,80,0.1)] bg-[#fffcfa]">
                 {isCredential ? (
                   <button
@@ -770,6 +810,7 @@ export function ApplyFixModal({ open, analysis, jobName, buildNumber, onAccept, 
                   })()}
                 </button>
               </div>
+              )}
             </div>
           </motion.div>
         </>

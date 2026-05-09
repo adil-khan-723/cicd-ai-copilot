@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2, Clock, Copy, Check, KeyRound } from 'lucide-react'
+import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2, Clock, KeyRound, Lightbulb } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
@@ -88,7 +88,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
   useEffect(() => { if (collapseSignal) setExpanded(false) }, [collapseSignal])
   const [fixing,        setFixing]        = useState(false)
   const [modalOpen,     setModalOpen]     = useState(false)
-  const [copied,        setCopied]        = useState(false)
+  const [modalMode,     setModalMode]     = useState<'fix' | 'suggestion'>('fix')
   const [pendingCredRetrigger, setPendingCredRetrigger] = useState<{
     credentialId: string
     jenkinsUrl: string
@@ -397,47 +397,43 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
 
           {analysis && !fixSucceeded && isLatestFailing && (
             <div className="flex items-center gap-2.5">
-              {canAutoFix ? (
+              {canAutoFix && (
                 <Button
                   size="sm"
-                  onClick={() => setModalOpen(true)}
+                  onClick={() => { setModalMode('fix'); setModalOpen(true) }}
                   disabled={fixing}
                   className="gap-2 bg-success hover:bg-success/90 text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
                 >
                   {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
                   {fixing ? 'Applying…' : (fixResult && !fixResult.success ? 'Retry Fix' : 'Apply Fix')}
                 </Button>
-              ) : (
+              )}
+              {!canAutoFix && DIAGNOSTIC_TYPES.has(analysis.fix_type) && analysis.steps && analysis.steps.length > 0 && (
+                <Button
+                  size="sm"
+                  onClick={() => { setModalMode('suggestion'); setModalOpen(true) }}
+                  className="gap-2 bg-accent hover:bg-accent-hi text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
+                >
+                  <Lightbulb className="h-3.5 w-3.5" strokeWidth={2} />
+                  See Suggestion
+                </Button>
+              )}
+              {!canAutoFix && !DIAGNOSTIC_TYPES.has(analysis.fix_type) && (
                 <div className="flex items-center gap-2 text-[12px] text-warning font-mono">
                   <AlertTriangle className="h-4 w-4" strokeWidth={2} />
-                  {DIAGNOSTIC_TYPES.has(analysis.fix_type) ? 'Primary fix is manual' : 'Low confidence — review recommended'}
+                  Low confidence — review recommended
                 </div>
               )}
               {showRelatedOnlyButton && (
                 <Button
                   size="sm"
-                  onClick={() => setModalOpen(true)}
+                  onClick={() => { setModalMode('fix'); setModalOpen(true) }}
                   disabled={fixing}
                   className="gap-2 bg-error hover:opacity-90 text-white font-semibold border-0 text-[13px] h-9 px-4 font-mono rounded-lg shadow-soft"
                 >
                   {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" strokeWidth={2} />}
                   {fixing ? 'Fixing…' : `Fix ${fixableRelatedCount} related issue${fixableRelatedCount !== 1 ? 's' : ''}`}
                 </Button>
-              )}
-              {DIAGNOSTIC_TYPES.has(analysis.fix_type) && analysis.steps && analysis.steps.length > 0 && (
-                <button
-                  onClick={() => {
-                    const text = analysis.steps!.map((s, i) => `${i + 1}. ${s}`).join('\n')
-                    navigator.clipboard.writeText(text).then(() => {
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
-                    })
-                  }}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-accent-border/50 text-[11px] font-mono text-text-muted hover:text-text-primary hover:bg-overlay/50 transition-colors cursor-pointer"
-                >
-                  {copied ? <Check className="h-3 w-3 text-success" strokeWidth={2} /> : <Copy className="h-3 w-3" strokeWidth={1.5} />}
-                  {copied ? 'Copied!' : 'Copy steps'}
-                </button>
               )}
               <Button
                 variant="ghost"
@@ -458,6 +454,7 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
               buildNumber={card.build}
               onAccept={applyFix}
               onCancel={() => setModalOpen(false)}
+              mode={modalMode}
             />
           )}
 
