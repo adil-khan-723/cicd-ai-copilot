@@ -325,6 +325,58 @@ _apt_pkg_installable() {
   apt-cache madison "$1" 2>/dev/null | grep -q .
 }
 
+# Bootstrap Python via uv when apt/dnf/etc. cannot supply 3.11+.
+# uv ships standalone, statically-linked Python builds that work on any Linux
+# regardless of distro version. Used as a last-resort fallback when:
+#   - Ubuntu codename is too new/old for deadsnakes
+#   - User on bleeding-edge non-LTS Ubuntu (resolute, oracular, etc.)
+# After install, uv-managed Python is symlinked into ~/.local/bin so the
+# normal _pick_python loop finds it.
+_install_python_via_uv() {
+  local target_ver="${1:-3.12}"
+
+  echo ""
+  echo -e "  ${YLW}Fallback:${RST} Installing Python ${target_ver} via uv (https://github.com/astral-sh/uv)"
+  echo -e "  ${DIM}Why: deadsnakes PPA has no python3.11/3.12 build for your Ubuntu codename.${RST}"
+  if [[ "$ASSUME_YES" != "true" && -t 0 ]]; then
+    read -r -p "  Use uv to install Python ${target_ver}? [Y/n] " _ans
+    _ans="$(echo "${_ans:-Y}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$_ans" != "y" && "$_ans" != "yes" ]]; then
+      return 1
+    fi
+  fi
+
+  if ! command -v uv &>/dev/null; then
+    info "Installing uv (single-binary Python installer)..."
+    if ! curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1 | tail -5; then
+      warn "uv install failed."
+      return 1
+    fi
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  fi
+
+  info "Installing Python ${target_ver} via uv..."
+  if ! uv python install "${target_ver}" 2>&1 | tail -5; then
+    warn "uv python install failed."
+    return 1
+  fi
+
+  # Symlink the uv-managed Python into ~/.local/bin so the validator finds it.
+  local uv_py
+  uv_py="$(uv python find "${target_ver}" 2>/dev/null || true)"
+  if [[ -z "$uv_py" || ! -x "$uv_py" ]]; then
+    warn "uv reported success but no python ${target_ver} binary found."
+    return 1
+  fi
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$uv_py" "$HOME/.local/bin/python${target_ver}"
+  ln -sf "$uv_py" "$HOME/.local/bin/python3.${target_ver#3.}"
+  export PATH="$HOME/.local/bin:$PATH"
+  ok "Python ${target_ver} installed via uv at $uv_py"
+  return 0
+}
+
+_PY_INSTALLED_VIA_UV=false
 if ! _pick_python; then
   # Distro recipes — apt prefers python3.12, falls back to 3.11
   _PY_PKG_APT="python3.12 python3.12-venv python3-pip"
@@ -346,32 +398,49 @@ if ! _pick_python; then
             info "python3.11 available via deadsnakes PPA"
           else
             UBUNTU_CODENAME=$(lsb_release -cs 2>/dev/null || echo unknown)
-            die "deadsnakes PPA was added but offers no installable python3.11/3.12 for your Ubuntu (codename: $UBUNTU_CODENAME).
-  This usually means your Ubuntu version is too new (deadsnakes hasn't shipped for it yet) or too old.
-  Workarounds:
-    1. Use pyenv to install Python from source: https://github.com/pyenv/pyenv
+            warn "deadsnakes PPA has no python3.11/3.12 build for Ubuntu '$UBUNTU_CODENAME' (likely too new or too old)."
+            # Last-resort: install Python via uv standalone builds. Works on any glibc Linux.
+            if _install_python_via_uv "3.12" && _pick_python; then
+              ok "Python $PYVER ($PYBIN) — installed via uv"
+              _PY_INSTALLED_VIA_UV=true
+            else
+              die "Could not install Python 3.11+ via apt or uv.
+  Manual options:
+    1. pyenv (build Python from source): https://github.com/pyenv/pyenv
     2. Switch to a supported Ubuntu LTS (22.04, 24.04) and re-run.
-    3. Install Python from a different source (uv, conda, etc.) and re-run with PATH updated."
+    3. Install Python yourself, ensure it's in PATH, and re-run."
+            fi
           fi
         else
-          die "Python 3.11+ not in apt repos. Add it manually:
+          # PPA add itself failed — try uv as a final fallback
+          warn "Could not add deadsnakes PPA. Trying uv as a fallback..."
+          if _install_python_via_uv "3.12" && _pick_python; then
+            ok "Python $PYVER ($PYBIN) — installed via uv"
+            _PY_INSTALLED_VIA_UV=true
+          else
+            die "Python 3.11+ not in apt repos and uv fallback failed. Manual install required:
     sudo add-apt-repository -y ppa:deadsnakes/ppa
     sudo apt-get update
     sudo apt-get install -y python3.11 python3.11-venv python3-pip
   Then re-run ./start.sh"
+          fi
         fi
       fi
     fi
   fi
-  _offer_install "Python 3.11+" \
-    "apt:$_PY_PKG_APT" \
-    "dnf:python3.12 python3.12-pip" \
-    "yum:python3.12 python3.12-pip" \
-    "pacman:python python-pip" \
-    "apk:python3 py3-pip py3-virtualenv" \
-    "brew:python@3.12" || die "Python 3.11+ is required."
-  if ! _pick_python; then
-    die "Python 3.11-3.13 still not detected after install. Try installing manually."
+
+  # Skip the apt/dnf install if we already got Python from uv.
+  if [[ "$_PY_INSTALLED_VIA_UV" != "true" ]]; then
+    _offer_install "Python 3.11+" \
+      "apt:$_PY_PKG_APT" \
+      "dnf:python3.12 python3.12-pip" \
+      "yum:python3.12 python3.12-pip" \
+      "pacman:python python-pip" \
+      "apk:python3 py3-pip py3-virtualenv" \
+      "brew:python@3.12" || die "Python 3.11+ is required."
+    if ! _pick_python; then
+      die "Python 3.11-3.13 still not detected after install. Try installing manually."
+    fi
   fi
 fi
 ok "Python $PYVER ($PYBIN)"
