@@ -281,19 +281,67 @@ _pick_python() {
 info "Validating prereqs (will prompt for any missing)..."
 
 # ── Python 3.11-3.13 ──
+
+# Add the deadsnakes PPA so old Ubuntu releases (20.04, 22.04, etc.) can install
+# python3.11+ when their default universe repos lack it. No-op on non-apt systems.
+_add_deadsnakes_ppa() {
+  [[ "$PKG_MGR" != "apt" ]] && return 1
+  echo ""
+  echo -e "  ${YLW}Note:${RST} Neither python3.12 nor python3.11 are in this Ubuntu's default repos."
+  echo -e "  ${DIM}Will add the deadsnakes PPA (https://launchpad.net/~deadsnakes) to install a newer Python.${RST}"
+  if [[ "$ASSUME_YES" != "true" && -t 0 ]]; then
+    read -r -p "  Add deadsnakes PPA now? [Y/n] " _ans
+    _ans="$(echo "${_ans:-Y}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$_ans" != "y" && "$_ans" != "yes" ]]; then
+      warn "Skipped PPA — install python3.11 manually and re-run."
+      return 1
+    fi
+  fi
+  if ! command -v add-apt-repository &>/dev/null; then
+    info "Installing software-properties-common (provides add-apt-repository)..."
+    sudo apt-get install -y -qq software-properties-common || {
+      warn "Could not install software-properties-common."
+      return 1
+    }
+  fi
+  info "Adding ppa:deadsnakes/ppa..."
+  if sudo add-apt-repository -y ppa:deadsnakes/ppa 2>&1 | tail -3; then
+    sudo apt-get update -qq 2>&1 | tail -2
+    return 0
+  fi
+  return 1
+}
+
 if ! _pick_python; then
-  # Distro recipes — apt prefers python3.12 (Ubuntu 24.04+), falls back to python3.11 on 22.04
+  # Distro recipes — apt prefers python3.12 (Ubuntu 24.04+), falls back to 3.11 on 22.04
   _PY_PKG_APT="python3.12 python3.12-venv python3-pip"
   if [[ "$PKG_MGR" == "apt" ]]; then
     # Refresh cache first — fresh cloud VMs often have empty apt lists
     _pkg_index_refresh
-    if ! apt-cache show python3.12 &>/dev/null; then
-      if apt-cache show python3.11 &>/dev/null; then
+    if ! apt-cache show python3.12 &>/dev/null 2>&1; then
+      if apt-cache show python3.11 &>/dev/null 2>&1; then
         _PY_PKG_APT="python3.11 python3.11-venv python3-pip"
         info "python3.12 not in apt repos — using python3.11 instead"
       else
-        warn "Neither python3.12 nor python3.11 in apt repos. You may need to add a deadsnakes PPA:"
-        warn "  sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get update"
+        # Neither in default repos. Try deadsnakes PPA (auto-added under --yes, prompted otherwise).
+        if _add_deadsnakes_ppa; then
+          # Re-probe — prefer 3.12 from PPA, fall back to 3.11
+          if apt-cache show python3.12 &>/dev/null 2>&1; then
+            _PY_PKG_APT="python3.12 python3.12-venv python3-pip"
+            info "python3.12 available via deadsnakes PPA — using it"
+          elif apt-cache show python3.11 &>/dev/null 2>&1; then
+            _PY_PKG_APT="python3.11 python3.11-venv python3-pip"
+            info "python3.11 available via deadsnakes PPA — using it"
+          else
+            die "Neither python3.12 nor python3.11 available even after adding deadsnakes PPA. Install Python 3.11+ manually and re-run."
+          fi
+        else
+          die "Python 3.11+ not available in apt repos. Add it manually:
+    sudo add-apt-repository -y ppa:deadsnakes/ppa
+    sudo apt-get update
+    sudo apt-get install -y python3.11 python3.11-venv python3-pip
+  Then re-run ./start.sh"
+        fi
       fi
     fi
   fi
