@@ -52,6 +52,12 @@ class TestResponseParser:
         result = parse_analysis_response(raw)
         assert result["fix_type"] == "diagnostic_only"
 
+    def test_missing_plugin_coerced_to_diagnostic(self):
+        """missing_plugin has no executor — must downgrade to diagnostic_only."""
+        raw = '{"root_cause": "Maven plugin not installed", "fix_suggestion": "Install it", "confidence": 0.9, "fix_type": "missing_plugin"}'
+        result = parse_analysis_response(raw)
+        assert result["fix_type"] == "diagnostic_only"
+
     def test_confidence_clamped_to_range(self):
         raw = '{"root_cause": "X", "fix_suggestion": "Y", "confidence": 1.5, "fix_type": "retry"}'
         result = parse_analysis_response(raw)

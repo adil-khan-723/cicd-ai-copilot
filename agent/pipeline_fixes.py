@@ -90,26 +90,43 @@ def pull_fresh_image(
     correct_image (both provided by the LLM), then retrigger the job.
 
     If bad_image/correct_image are not supplied, falls back to a plain retry.
-    Searches Dockerfiles inside the Jenkins Docker container workspace under /tmp.
+
+    Searches Dockerfiles in:
+      1. Job-scoped workspace (JENKINS_WORKSPACE_PATH or /var/jenkins_home/workspace/<job>)
+      2. /tmp fallback (legacy ad-hoc pipelines that materialise Dockerfiles there)
     """
+    import os
     import subprocess
     import shlex
+
+    container = os.environ.get("JENKINS_DOCKER_CONTAINER", "jenkins")
+    base_workspace = os.environ.get(
+        "JENKINS_WORKSPACE_PATH", "/var/jenkins_home/workspace"
+    ).rstrip("/")
+    search_paths = [f"{base_workspace}/{job_name}", "/tmp"]
 
     try:
         server = _get_jenkins_server()
 
         if bad_image and correct_image:
-            find_cmd = [
-                "docker", "exec", "jenkins",
-                "find", "/tmp", "-name", "Dockerfile", "-maxdepth", "4",
-            ]
-            find_result = subprocess.run(find_cmd, capture_output=True, text=True, timeout=10)
-            dockerfiles = [p.strip() for p in find_result.stdout.splitlines() if p.strip()]
+            dockerfiles: list[str] = []
+            for path in search_paths:
+                find_cmd = [
+                    "docker", "exec", container,
+                    "find", path, "-name", "Dockerfile", "-maxdepth", "6",
+                ]
+                find_result = subprocess.run(find_cmd, capture_output=True, text=True, timeout=10)
+                dockerfiles.extend(
+                    p.strip() for p in find_result.stdout.splitlines() if p.strip()
+                )
+            # Dedup while preserving order (workspace results first)
+            seen: set[str] = set()
+            dockerfiles = [d for d in dockerfiles if not (d in seen or seen.add(d))]
 
             patched = []
             for df_path in dockerfiles:
                 cat_result = subprocess.run(
-                    ["docker", "exec", "jenkins", "cat", df_path],
+                    ["docker", "exec", container, "cat", df_path],
                     capture_output=True, text=True, timeout=10,
                 )
                 content = cat_result.stdout
@@ -117,7 +134,7 @@ def pull_fresh_image(
                     continue
                 fixed = content.replace(bad_image, correct_image)
                 write_cmd = [
-                    "docker", "exec", "jenkins", "sh", "-c",
+                    "docker", "exec", container, "sh", "-c",
                     f"printf '%s' {shlex.quote(fixed)} > {shlex.quote(df_path)}",
                 ]
                 wr = subprocess.run(write_cmd, capture_output=True, text=True, timeout=10)
@@ -139,7 +156,7 @@ def pull_fresh_image(
             return FixResult(
                 success=False,
                 fix_type="pull_image",
-                detail=f"Image tag '{bad_image}' not found in any Dockerfile under /tmp — patch could not be applied.",
+                detail=f"Image tag '{bad_image}' not found in any Dockerfile under {', '.join(search_paths)} — patch could not be applied.",
             )
 
         # No LLM-provided image info — retrigger with PULL_FRESH_IMAGE flag

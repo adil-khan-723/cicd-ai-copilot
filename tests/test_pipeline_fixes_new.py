@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 import jenkins as jenkins_lib
-from agent.pipeline_fixes import configure_tool, configure_credential, fix_step_typo
+from agent.pipeline_fixes import configure_tool, configure_credential, fix_step_typo, pull_fresh_image
 
 
 class TestConfigureTool:
@@ -285,3 +285,46 @@ class TestConfigureCredential:
 
         assert result.success is True
         server.build_job.assert_not_called()
+
+
+class TestPullFreshImage:
+    def test_searches_workspace_then_tmp(self):
+        """pull_fresh_image must search the job workspace before /tmp."""
+        server = MagicMock()
+        find_calls = []
+
+        def fake_run(cmd, **kwargs):
+            res = MagicMock()
+            res.returncode = 0
+            res.stdout = ""
+            if cmd[:2] == ["docker", "exec"] and "find" in cmd:
+                find_calls.append(cmd)
+                # Pretend workspace search finds one Dockerfile
+                if "/var/jenkins_home/workspace/myjob" in cmd:
+                    res.stdout = "/var/jenkins_home/workspace/myjob/Dockerfile\n"
+            elif "cat" in cmd:
+                res.stdout = "FROM node:18-bad\n"
+            return res
+
+        with patch("agent.pipeline_fixes._get_jenkins_server", return_value=server), \
+             patch("subprocess.run", side_effect=fake_run):
+            result = pull_fresh_image(
+                job_name="myjob",
+                build_number="1",
+                bad_image="node:18-bad",
+                correct_image="node:18",
+            )
+
+        # Workspace path searched first, then /tmp fallback
+        find_paths = [c[c.index("find") + 1] for c in find_calls]
+        assert "/var/jenkins_home/workspace/myjob" in find_paths
+        assert "/tmp" in find_paths
+        assert result.success is True
+        assert "node:18" in result.detail
+
+    def test_falls_back_to_retry_without_image_info(self):
+        server = MagicMock()
+        with patch("agent.pipeline_fixes._get_jenkins_server", return_value=server):
+            result = pull_fresh_image(job_name="myjob", build_number="1")
+        assert result.success is True
+        server.build_job.assert_called_once()
