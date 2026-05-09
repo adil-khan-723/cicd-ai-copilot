@@ -172,30 +172,38 @@ GROOVY
 fi
 
 # ── 1. Python ────────────────────────────────────────────────
+# Pick first viable interpreter from candidates. Some distros (RHEL/AlmaLinux 9)
+# ship python3 -> 3.9 by default but offer python3.11/3.12/3.13 alongside.
+# We pin <= 3.13 because pydantic-core wheels for 3.14+ are not always available.
 info "Checking Python..."
-if ! command -v python3 &>/dev/null; then
-  die "python3 not found. Install Python 3.11+."
+PYBIN=""
+PYVER=""
+for _candidate in python3.13 python3.12 python3.11 python3; do
+  if command -v "$_candidate" &>/dev/null; then
+    _v=$("$_candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "0.0")
+    _maj=$(echo "$_v" | cut -d. -f1)
+    _min=$(echo "$_v" | cut -d. -f2)
+    if [[ "$_maj" -eq 3 && "$_min" -ge 11 && "$_min" -le 13 ]]; then
+      PYBIN="$_candidate"
+      PYVER="$_v"
+      break
+    fi
+  fi
+done
+unset _candidate _v _maj _min
+
+if [[ -z "$PYBIN" ]]; then
+  die "Python 3.11, 3.12 or 3.13 not found. Install one:
+    Debian/Ubuntu: sudo apt-get install -y python3.12 python3.12-venv python3-pip
+    Fedora/RHEL:   sudo dnf install -y python3.12 python3.12-pip
+    macOS:         brew install python@3.12"
 fi
-PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-PYMAJ=$(echo "$PYVER" | cut -d. -f1)
-PYMIN=$(echo "$PYVER" | cut -d. -f2)
-if [[ "$PYMAJ" -lt 3 || ("$PYMAJ" -eq 3 && "$PYMIN" -lt 11) ]]; then
-  die "Python 3.11+ required, found $PYVER"
-fi
-ok "Python $PYVER"
+ok "Python $PYVER ($PYBIN)"
 
 # ── 2. Virtualenv ────────────────────────────────────────────
 VENV_DIR=".venv"
 if [[ ! -d "$VENV_DIR" ]]; then
   info "Creating virtualenv in .venv ..."
-  # Use python3.13 explicitly — python3.14+ breaks pydantic-core
-  if command -v python3.13 &>/dev/null; then
-    PYBIN=python3.13
-  elif command -v python3.12 &>/dev/null; then
-    PYBIN=python3.12
-  else
-    PYBIN=python3
-  fi
 
   # Capture stdout+stderr — python -m venv prints the ensurepip error to stdout.
   set +e
