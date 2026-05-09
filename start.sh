@@ -305,38 +305,56 @@ _add_deadsnakes_ppa() {
     }
   fi
   info "Adding ppa:deadsnakes/ppa..."
-  if sudo add-apt-repository -y ppa:deadsnakes/ppa 2>&1 | tail -3; then
-    sudo apt-get update -qq 2>&1 | tail -2
+  # add-apt-repository writes to /etc/apt/sources.list.d/. Run apt-get update
+  # explicitly afterwards so the PPA's index lands in /var/lib/apt/lists/.
+  # Stream output (no pipe) so failures surface and don't mask the real error.
+  if sudo add-apt-repository -y ppa:deadsnakes/ppa; then
+    info "Refreshing apt index after PPA add..."
+    sudo apt-get update 2>&1 | grep -E "^(Hit|Get|Err|W:|E:)" | tail -10 || true
+    _PKG_INDEX_REFRESHED=true
     return 0
   fi
   return 1
 }
 
+# Check whether a package has at least one installable version.
+# apt-cache show returns 0 for any package the cache knows about, including
+# 'no installation candidate' phantoms. apt-cache madison only lists rows
+# when an installable version actually exists.
+_apt_pkg_installable() {
+  apt-cache madison "$1" 2>/dev/null | grep -q .
+}
+
 if ! _pick_python; then
-  # Distro recipes — apt prefers python3.12 (Ubuntu 24.04+), falls back to 3.11 on 22.04
+  # Distro recipes — apt prefers python3.12, falls back to 3.11
   _PY_PKG_APT="python3.12 python3.12-venv python3-pip"
   if [[ "$PKG_MGR" == "apt" ]]; then
     # Refresh cache first — fresh cloud VMs often have empty apt lists
     _pkg_index_refresh
-    if ! apt-cache show python3.12 &>/dev/null 2>&1; then
-      if apt-cache show python3.11 &>/dev/null 2>&1; then
+    if ! _apt_pkg_installable python3.12; then
+      if _apt_pkg_installable python3.11; then
         _PY_PKG_APT="python3.11 python3.11-venv python3-pip"
-        info "python3.12 not in apt repos — using python3.11 instead"
+        info "python3.12 not installable — using python3.11 instead"
       else
-        # Neither in default repos. Try deadsnakes PPA (auto-added under --yes, prompted otherwise).
+        # Neither installable from default repos. Try deadsnakes PPA.
         if _add_deadsnakes_ppa; then
-          # Re-probe — prefer 3.12 from PPA, fall back to 3.11
-          if apt-cache show python3.12 &>/dev/null 2>&1; then
+          if _apt_pkg_installable python3.12; then
             _PY_PKG_APT="python3.12 python3.12-venv python3-pip"
-            info "python3.12 available via deadsnakes PPA — using it"
-          elif apt-cache show python3.11 &>/dev/null 2>&1; then
+            info "python3.12 available via deadsnakes PPA"
+          elif _apt_pkg_installable python3.11; then
             _PY_PKG_APT="python3.11 python3.11-venv python3-pip"
-            info "python3.11 available via deadsnakes PPA — using it"
+            info "python3.11 available via deadsnakes PPA"
           else
-            die "Neither python3.12 nor python3.11 available even after adding deadsnakes PPA. Install Python 3.11+ manually and re-run."
+            UBUNTU_CODENAME=$(lsb_release -cs 2>/dev/null || echo unknown)
+            die "deadsnakes PPA was added but offers no installable python3.11/3.12 for your Ubuntu (codename: $UBUNTU_CODENAME).
+  This usually means your Ubuntu version is too new (deadsnakes hasn't shipped for it yet) or too old.
+  Workarounds:
+    1. Use pyenv to install Python from source: https://github.com/pyenv/pyenv
+    2. Switch to a supported Ubuntu LTS (22.04, 24.04) and re-run.
+    3. Install Python from a different source (uv, conda, etc.) and re-run with PATH updated."
           fi
         else
-          die "Python 3.11+ not available in apt repos. Add it manually:
+          die "Python 3.11+ not in apt repos. Add it manually:
     sudo add-apt-repository -y ppa:deadsnakes/ppa
     sudo apt-get update
     sudo apt-get install -y python3.11 python3.11-venv python3-pip
