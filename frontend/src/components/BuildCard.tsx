@@ -7,6 +7,7 @@ import { AgentStepRow, PipelineStageRow } from './StageGraph'
 import { ApplyFixModal } from './ApplyFixModal'
 import { PotentialIssuesCard } from './PotentialIssuesCard'
 import { cn } from '@/lib/utils'
+import { useAvailableModels } from '@/hooks/useAvailableModels'
 import type { BuildCard as BuildCardType, CredentialFields } from '@/types'
 
 const CONFIDENCE_THRESHOLD = 0.75
@@ -349,9 +350,20 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
             <div className="rounded-xl border border-accent-border/40 bg-overlay/30 p-4 space-y-3.5">
               <div className="flex items-center justify-between">
                 <SectionLabel>Root Cause</SectionLabel>
-                <span className="flex items-center gap-1 text-[11px] font-mono text-text-dim mb-2">
-                  <Hash className="h-3 w-3" />{card.build}
-                </span>
+                <div className="flex items-center gap-2 mb-2">
+                  {analysis.model_used && (
+                    <span
+                      className="text-[10px] font-mono text-text-muted bg-overlay/60 border border-accent-border/30 rounded-md px-1.5 py-0.5"
+                      title={`Analyzed by ${analysis.provider_used ?? '?'} / ${analysis.model_used}${analysis.reanalyzed ? ' (re-analyzed)' : ''}`}
+                    >
+                      {analysis.provider_used === 'anthropic' ? '🧠' : '🦙'} {analysis.model_used}
+                      {analysis.reanalyzed && <span className="ml-1 text-accent">↻</span>}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1 text-[11px] font-mono text-text-dim">
+                    <Hash className="h-3 w-3" />{card.build}
+                  </span>
+                </div>
               </div>
               <p className="text-[13px] leading-relaxed text-text-primary font-medium -mt-1">{analysis.root_cause}</p>
               {analysis.steps && analysis.steps.length > 0 ? (
@@ -393,6 +405,15 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
                 </div>
               )}
             </div>
+          )}
+
+          {analysis && (
+            <ReanalyzeBar
+              job={String(card.job)}
+              build={String(card.build)}
+              currentProvider={analysis.provider_used ?? ''}
+              currentModel={analysis.model_used ?? ''}
+            />
           )}
 
           {analysis && !fixSucceeded && isLatestFailing && (
@@ -563,6 +584,71 @@ function InfoBlock({ label, text, highlight }: { label: string; text: string; hi
       <p className={cn('text-[13px] leading-relaxed', highlight ? 'text-text-primary font-medium' : 'text-text-base')}>
         {text}
       </p>
+    </div>
+  )
+}
+
+function ReanalyzeBar({ job, build, currentProvider, currentModel }: {
+  job: string
+  build: string
+  currentProvider: string
+  currentModel: string
+}) {
+  const { models } = useAvailableModels()
+  const [selected, setSelected] = useState('')
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState('')
+
+  if (models.length === 0) return null
+
+  const candidates = models.filter(m => `${m.provider}/${m.model}` !== `${currentProvider}/${currentModel}`)
+
+  async function rerun() {
+    if (!selected) return
+    const [provider, ...rest] = selected.split('/')
+    const model = rest.join('/')
+    setRunning(true); setError('')
+    try {
+      const r = await fetch('/api/reanalyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job, build, provider_override: provider, model_override: model }),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail ?? `HTTP ${r.status}`)
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Network error')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono">
+      <span className="text-text-dim">Re-analyze with:</span>
+      <select
+        value={selected}
+        onChange={e => { setSelected(e.target.value); setError('') }}
+        className="px-2 py-1 rounded-md border border-accent-border/40 bg-white text-text-base focus:outline-none focus:border-accent text-[11px]"
+        disabled={running}
+      >
+        <option value="">— pick a model —</option>
+        {candidates.map(m => (
+          <option key={`${m.provider}/${m.model}`} value={`${m.provider}/${m.model}`}>
+            {m.label}{!m.online ? ' (offline)' : ''}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={rerun}
+        disabled={!selected || running}
+        className="h-7 px-3 rounded-md border border-accent-border/40 text-accent hover:bg-accent/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[11px] font-semibold"
+      >
+        {running ? 'Re-analyzing…' : '↻ Re-run'}
+      </button>
+      {error && <span className="text-error">{error}</span>}
     </div>
   )
 }

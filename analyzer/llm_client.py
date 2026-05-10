@@ -23,23 +23,36 @@ _PROVIDER_UNAVAILABLE = {
 }
 
 
-def analyze(context: str) -> dict:
+def analyze(
+    context: str,
+    provider_override: str = "",
+    model_override: str = "",
+) -> dict:
     """
     Analyze a pipeline failure context string using the configured LLM provider.
 
     Args:
         context: Output from context_builder.build_context()
+        provider_override: 'anthropic' / 'ollama' to bypass default + fallback chain
+        model_override: specific model id; both override args bypass cache
 
     Returns:
-        Dict with keys: root_cause, fix_suggestion, confidence, fix_type
+        Dict with keys: root_cause, fix_suggestion, confidence, fix_type, model_used, provider_used
     """
-    # Cache check
-    cached = analysis_cache.get(context)
-    if cached is not None:
-        return cached
+    using_override = bool(provider_override or model_override)
+
+    # Cache check — only when no override (overrides force a fresh call)
+    if not using_override:
+        cached = analysis_cache.get(context)
+        if cached is not None:
+            return cached
 
     try:
-        provider = get_provider("analysis")
+        provider = get_provider(
+            "analysis",
+            provider_override=provider_override,
+            model_override=model_override,
+        )
     except ProviderUnavailableError as e:
         logger.error("All LLM providers unavailable: %s", e)
         return dict(_PROVIDER_UNAVAILABLE)
@@ -59,8 +72,12 @@ def analyze(context: str) -> dict:
         }
 
     result = parse_analysis_response(raw)
+    # Stamp which model + provider produced this result so the UI can show + offer re-run
+    result["provider_used"] = provider.name
+    result["model_used"] = getattr(provider, "_model", "")
 
-    # Cache the parsed result
-    analysis_cache.set(context, result)
+    # Only cache the default-routed result. Overrides are one-shot.
+    if not using_override:
+        analysis_cache.set(context, result)
 
     return result

@@ -8,6 +8,26 @@ from config import get_settings, validate_config, warn_security_config
 
 logger = logging.getLogger(__name__)
 
+# In-memory cache of last context string per (job, build). Lets the re-analyze
+# endpoint replay an analysis with a different model without re-fetching/re-cleaning
+# the whole pipeline payload. Bounded — drop oldest when over limit.
+_LAST_CONTEXT_CAP = 100
+_last_context_by_build: dict[tuple[str, str], dict] = {}
+
+
+def _remember_context(job: str, build: str, ctx: str, report, jenkinsfile: str) -> None:
+    if len(_last_context_by_build) >= _LAST_CONTEXT_CAP:
+        # Pop oldest insertion-order entry (dict preserves order in 3.7+)
+        try:
+            _last_context_by_build.pop(next(iter(_last_context_by_build)))
+        except StopIteration:
+            pass
+    _last_context_by_build[(str(job), str(build))] = {
+        "context": ctx,
+        "verification": report,
+        "jenkinsfile": jenkinsfile,
+    }
+
 
 def _scrub_err(e: Exception) -> str:
     from copilot.secrets_manager import scrub
@@ -462,6 +482,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
         })
         context_str = build_context(cleaned, report, ctx, jenkinsfile=payload.get("jenkinsfile", ""))
         analysis = analyze(context_str)  # always returns a dict — never raises
+        _remember_context(ctx.job_name, ctx.build_number, context_str, report, payload.get("jenkinsfile", ""))
 
         # ── Syntax/DSL-error sentinel — checked before verification overrides ───────
         # Covers both compile-time (MultipleCompilationErrorsException, startup failed)
@@ -599,6 +620,8 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "correct_image": analysis.get("correct_image"),
             "credential_type": analysis.get("credential_type"),
             "potential_issues": filtered_potential_issues,
+            "model_used": analysis.get("model_used", ""),
+            "provider_used": analysis.get("provider_used", ""),
             "pipeline_stages": [
                 {"name": name, "status": status}
                 for name, status in ctx.pipeline_stages
