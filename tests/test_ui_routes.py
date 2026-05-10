@@ -225,3 +225,49 @@ def test_chat_handler_includes_history_with_role_labels():
     assert "What is Jenkins?" in prompt_used
     assert "User:" in prompt_used
     assert "Assistant:" in prompt_used
+
+def test_reanalyze_returns_404_when_no_saved_context():
+    response = client.post("/api/reanalyze", json={"job": "ghost", "build": "999"})
+    assert response.status_code == 404
+    assert "no saved context" in response.json()["detail"].lower()
+
+
+def test_reanalyze_replays_with_override(monkeypatch):
+    """Saved context + override -> analyze called with overrides + new event published."""
+    from webhook.server import _last_context_by_build
+    from verification.models import VerificationReport
+    _last_context_by_build[("demo", "1")] = {
+        "context": "fake context",
+        "verification": VerificationReport(platform="jenkins"),
+        "jenkinsfile": "",
+    }
+    fake_analysis = {
+        "root_cause": "via override",
+        "fix_suggestion": "x",
+        "steps": [],
+        "confidence": 0.9,
+        "fix_type": "retry",
+        "potential_issues": [],
+        "model_used": "claude-sonnet-4-6",
+        "provider_used": "anthropic",
+    }
+    captured = {}
+    def fake_analyze(ctx, provider_override="", model_override=""):
+        captured["ctx"] = ctx
+        captured["provider"] = provider_override
+        captured["model"] = model_override
+        return fake_analysis
+    with patch("analyzer.llm_client.analyze", fake_analyze):
+        response = client.post("/api/reanalyze", json={
+            "job": "demo",
+            "build": "1",
+            "provider_override": "anthropic",
+            "model_override": "claude-sonnet-4-6",
+        })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model_used"] == "claude-sonnet-4-6"
+    assert body["provider_used"] == "anthropic"
+    assert captured["provider"] == "anthropic"
+    assert captured["model"] == "claude-sonnet-4-6"
+

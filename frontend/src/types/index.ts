@@ -64,6 +64,16 @@ export interface AnalysisCompleteEvent {
   correct_image?: string
   credential_type?: string
   potential_issues?: PotentialIssue[]
+  model_used?: string
+  provider_used?: string
+  reanalyzed?: boolean
+}
+
+export interface AvailableModel {
+  provider: string  // 'anthropic' | 'ollama'
+  model: string
+  online: boolean
+  label: string
 }
 
 export interface CredentialFields {

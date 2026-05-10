@@ -310,6 +310,70 @@ async def save_llm_settings(payload: LLMConfigPayload):
     return {"ok": True}
 
 
+@router.get("/api/llm/available-models")
+async def available_models():
+    """
+    Enumerate all reachable LLM models across configured providers.
+    Returns: { "models": [{"provider": "...", "model": "...", "online": bool, "label": "..."}], "default": {...} }
+    Anthropic models listed only if API key configured + reachable.
+    Ollama models listed only if /api/tags reachable.
+    """
+    from config import get_settings
+    s = get_settings()
+    models: list[dict] = []
+
+    # Anthropic
+    if s.anthropic_api_key:
+        try:
+            import anthropic as _anthropic
+            client = _anthropic.Anthropic(api_key=s.anthropic_api_key)
+            page = client.models.list(limit=50)
+            for m in page.data:
+                models.append({
+                    "provider": "anthropic",
+                    "model": m.id,
+                    "online": True,
+                    "label": f"anthropic / {m.id}",
+                })
+        except Exception:
+            # API down — still surface configured analysis/generation models so user can pick blindly
+            for m in [s.anthropic_analysis_model, s.anthropic_generation_model]:
+                if m:
+                    models.append({
+                        "provider": "anthropic", "model": m, "online": False,
+                        "label": f"anthropic / {m} (offline)",
+                    })
+
+    # Ollama
+    ollama_url = s.ollama_base_url or "http://localhost:11434"
+    try:
+        import requests as _req
+        r = _req.get(f"{ollama_url.rstrip('/')}/api/tags", timeout=3)
+        if r.status_code == 200:
+            for tag in r.json().get("models", []):
+                name = tag.get("name", "")
+                if name:
+                    models.append({
+                        "provider": "ollama", "model": name, "online": True,
+                        "label": f"ollama / {name}",
+                    })
+    except Exception:
+        for m in [s.analysis_model, s.generation_model]:
+            if m:
+                models.append({
+                    "provider": "ollama", "model": m, "online": False,
+                    "label": f"ollama / {m} (offline)",
+                })
+
+    return {
+        "models": models,
+        "default_provider": s.llm_provider,
+        "default_analysis_model": (
+            s.anthropic_analysis_model if s.llm_provider == "anthropic" else s.analysis_model
+        ),
+    }
+
+
 # ── Jenkins profiles ───────────────────────────────────────────────────────
 
 class ProfilePayload(BaseModel):
@@ -650,6 +714,104 @@ async def audit_log(limit: int = 20):
 
 class InjectWebhookPayload(BaseModel):
     job_name: str
+
+
+class ReanalyzePayload(BaseModel):
+    job: str
+    build: str
+    provider_override: str = ""
+    model_override: str = ""
+
+
+@router.post("/api/reanalyze")
+async def reanalyze(payload: ReanalyzePayload):
+    """
+    Re-run analysis on a previously-analyzed build with a different model.
+    Reuses the cached context (no Jenkins re-fetch). Emits a fresh
+    analysis_complete event so the UI updates the card in place.
+
+    EventBus dedup logic for analysis_complete (drop duplicate per job+build)
+    is bypassed here because we mark the event with a fresh suffix below
+    by including model_used (UI keys card by job+build, not full event).
+    """
+    from analyzer.llm_client import analyze
+    from webhook.server import _last_context_by_build, _filter_potential_issues
+    from ui.event_bus import bus
+
+    key = (str(payload.job), str(payload.build))
+    saved = _last_context_by_build.get(key)
+    if not saved:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No saved context for {payload.job} #{payload.build}. Trigger a fresh build first.",
+        )
+
+    loop = asyncio.get_event_loop()
+    analysis = await loop.run_in_executor(
+        None,
+        lambda: analyze(
+            saved["context"],
+            provider_override=payload.provider_override,
+            model_override=payload.model_override,
+        ),
+    )
+
+    # Re-run the same potential_issues filter so the new analysis carries them
+    report = saved["verification"]
+    settings = get_settings()
+    jenkins_auth = (settings.jenkins_user, settings.jenkins_token) if settings.jenkins_token else None
+    primary_cred_id = ""
+    if analysis.get("fix_type") == "configure_credential" and report.missing_credentials:
+        primary_cred_id = report.missing_credentials[0]
+    primary_tool_ref = ""
+    if analysis.get("fix_type") == "configure_tool" and report.mismatched_tools:
+        primary_tool_ref = report.mismatched_tools[0].referenced
+    filtered = _filter_potential_issues(
+        analysis.get("potential_issues", []),
+        report,
+        primary_fix_type=analysis.get("fix_type", ""),
+        primary_cred_id=primary_cred_id,
+        primary_tool_ref=primary_tool_ref,
+        jenkins_url=settings.jenkins_url or "",
+        jenkins_auth=jenkins_auth,
+    )
+
+    # EventBus dedups analysis_complete by (job, build). Bus.clear_history is too
+    # destructive — just clear the prior analysis_complete for this build.
+    bus._history = type(bus._history)(
+        (e for e in bus._history
+         if not (e.get("type") == "analysis_complete"
+                 and str(e.get("job")) == str(payload.job)
+                 and str(e.get("build")) == str(payload.build))),
+        maxlen=bus._history.maxlen,
+    )
+
+    bus.publish({
+        "type": "analysis_complete",
+        "job": payload.job,
+        "build": payload.build,
+        "failed_stage": "",
+        "root_cause": analysis.get("root_cause", ""),
+        "fix_suggestion": analysis.get("fix_suggestion", ""),
+        "steps": analysis.get("steps", []),
+        "fix_type": analysis.get("fix_type"),
+        "confidence": analysis.get("confidence", 0),
+        "log_excerpt": "",
+        "bad_step": analysis.get("bad_step") or analysis.get("bad_line"),
+        "correct_step": analysis.get("correct_step") or analysis.get("correct_line"),
+        "bad_image": analysis.get("bad_image"),
+        "correct_image": analysis.get("correct_image"),
+        "credential_type": analysis.get("credential_type"),
+        "potential_issues": filtered,
+        "model_used": analysis.get("model_used", ""),
+        "provider_used": analysis.get("provider_used", ""),
+        "reanalyzed": True,
+    })
+    return {
+        "ok": True,
+        "model_used": analysis.get("model_used", ""),
+        "provider_used": analysis.get("provider_used", ""),
+    }
 
 
 @router.post("/api/feed/clear")

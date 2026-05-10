@@ -21,18 +21,38 @@ class ProviderUnavailableError(RuntimeError):
     """Raised when all providers in the fallback chain are unavailable."""
 
 
-def get_provider(task: str = "analysis") -> BaseLLMProvider:
+def get_provider(
+    task: str = "analysis",
+    provider_override: str = "",
+    model_override: str = "",
+) -> BaseLLMProvider:
     """
     Return the configured LLM provider for the given task.
-    Tries the primary provider first; falls back to LLM_FALLBACK_PROVIDER if unavailable.
 
+    Default behaviour: try LLM_PROVIDER then LLM_FALLBACK_PROVIDER.
     Task type determines which model is selected:
       - analysis tasks   → settings.analysis_model
       - generation tasks → settings.generation_model
+
+    Overrides (set both for per-call routing — used by Re-analyze UI):
+      - provider_override: skip fallback chain, use this provider only
+      - model_override: pass this model to the provider instead of the
+        task-default. Empty string falls back to task-default.
     """
     settings = get_settings()
-
     is_generation = task.lower() in _GENERATION_TASKS
+
+    # Override path: build directly, no fallback chain
+    if provider_override:
+        provider = _build_provider(
+            provider_override.lower(), is_generation, settings,
+            model_override=model_override,
+        )
+        if not provider.is_available():
+            raise ProviderUnavailableError(
+                f"Override provider '{provider_override}' is not available"
+            )
+        return provider
 
     primary = settings.llm_provider.lower()
     fallback = settings.llm_fallback_provider.lower()
@@ -42,7 +62,6 @@ def get_provider(task: str = "analysis") -> BaseLLMProvider:
     if fallback and fallback != primary:
         chain.append(fallback)
 
-    last_error: Exception | None = None
     for provider_name in chain:
         try:
             provider = _build_provider(provider_name, is_generation, settings)
@@ -60,7 +79,6 @@ def get_provider(task: str = "analysis") -> BaseLLMProvider:
             return provider
         else:
             logger.warning("Provider '%s' is not available", provider_name)
-            last_error = RuntimeError(f"Provider '{provider_name}' is not available")
 
     raise ProviderUnavailableError(
         f"All LLM providers unavailable (tried: {chain}). "
@@ -72,16 +90,19 @@ def _build_provider(
     provider_name: str,
     is_generation: bool,
     settings,
+    model_override: str = "",
 ) -> BaseLLMProvider:
-    """Construct the provider instance for the given name."""
+    """Construct the provider instance for the given name. model_override wins when set."""
     if provider_name == "ollama":
         from providers.ollama_provider import OllamaProvider
-        model = settings.generation_model if is_generation else settings.analysis_model
+        model = model_override or (
+            settings.generation_model if is_generation else settings.analysis_model
+        )
         return OllamaProvider(model=model)
 
     if provider_name == "anthropic":
         from providers.anthropic_provider import AnthropicProvider
-        model = (
+        model = model_override or (
             settings.anthropic_generation_model if is_generation
             else settings.anthropic_analysis_model
         )
