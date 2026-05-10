@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Info, Loader2, CheckCircle2, Server, XCircle, Brain } from 'lucide-react'
+import { Zap, Info, Loader2, CheckCircle2, Server, XCircle, Brain, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { SetupFormData } from '@/types'
@@ -215,6 +215,36 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                       onChange={e => { set('jenkins_token')(e); setJenkinsTestState('idle') }}
                     />
                   </div>
+
+                  {/* Format mismatch warning — soft, doesn't block save */}
+                  {(() => {
+                    const secret = form.jenkins_token.trim()
+                    if (!secret) return null
+                    const looksLikeToken = /^[a-f0-9]{32,}$/i.test(secret)
+                    if (form.jenkins_auth_method === 'token' && !looksLikeToken) {
+                      return (
+                        <div className="flex gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
+                          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 mt-0.5" strokeWidth={2} />
+                          <p className="text-[11px] text-text-muted leading-relaxed">
+                            This doesn't look like a Jenkins API token (expected 32+ hex chars).
+                            If you meant to use a password, switch the Auth method above.
+                          </p>
+                        </div>
+                      )
+                    }
+                    if (form.jenkins_auth_method === 'password' && looksLikeToken) {
+                      return (
+                        <div className="flex gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
+                          <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 mt-0.5" strokeWidth={2} />
+                          <p className="text-[11px] text-text-muted leading-relaxed">
+                            This looks like a Jenkins API token, not a password.
+                            Switch Auth method to <span className="text-text-primary font-medium">API Token</span> for clarity.
+                          </p>
+                        </div>
+                      )
+                    }
+                    return null
+                  })()}
 
                   {/* Test connection */}
                   <div>
