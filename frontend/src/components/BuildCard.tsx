@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { ChevronDown, ChevronRight, X, Loader2, Wrench, AlertTriangle, Hash, CheckCircle2, Clock, KeyRound, Lightbulb } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Select } from '@/components/ui/select'
 import { AgentStepRow, PipelineStageRow } from './StageGraph'
 import { ApplyFixModal } from './ApplyFixModal'
 import { PotentialIssuesCard } from './PotentialIssuesCard'
@@ -636,19 +637,19 @@ function ReanalyzeBar({ job, build, currentProvider, currentModel }: {
   return (
     <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono">
       <span className="text-text-dim">Re-analyze with:</span>
-      <select
+      <Select
+        size="sm"
         value={selected}
-        onChange={e => { setSelected(e.target.value); setError('') }}
-        className="px-2 py-1 rounded-md border border-accent-border/40 bg-white text-text-base focus:outline-none focus:border-accent text-[11px]"
+        onChange={v => { setSelected(v); setError('') }}
+        placeholder="— pick a model —"
         disabled={running}
-      >
-        <option value="">— pick a model —</option>
-        {candidates.map(m => (
-          <option key={`${m.provider}/${m.model}`} value={`${m.provider}/${m.model}`}>
-            {m.label}{!m.online ? ' (offline)' : ''}
-          </option>
-        ))}
-      </select>
+        className="min-w-[220px]"
+        options={candidates.map(m => ({
+          value: `${m.provider}/${m.model}`,
+          label: m.label,
+          hint: m.online ? '' : 'offline',
+        }))}
+      />
       <button
         onClick={rerun}
         disabled={!selected || running}

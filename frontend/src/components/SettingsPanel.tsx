@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Settings, Server, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle, Shield, Loader2, Eye, EyeOff, KeyRound, Trash2, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 interface SettingSection {
@@ -505,18 +506,15 @@ function ApiKeysManager() {
                 You're deleting the active key. Pick a replacement to activate first, then it'll be deleted.
               </p>
             </div>
-            <select
+            <Select
+              size="sm"
               value={pendingReplacement}
-              onChange={e => setPendingReplacement(e.target.value)}
-              className="w-full px-2 py-1.5 rounded-md border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
-            >
-              <option value="">Choose replacement key…</option>
-              {keys
+              onChange={setPendingReplacement}
+              placeholder="Choose replacement key…"
+              options={keys
                 .filter(k => k.provider === switchPrompt.provider && k.id !== switchPrompt.keyId)
-                .map(k => (
-                  <option key={k.id} value={k.id}>{k.name} ({k.key_preview})</option>
-                ))}
-            </select>
+                .map(k => ({ value: k.id, label: k.name, hint: k.key_preview }))}
+            />
             <div className="flex gap-2">
               <Button
                 size="sm"
@@ -549,15 +547,12 @@ function ApiKeysManager() {
               onChange={e => setNewName(e.target.value)}
               className="px-2.5 py-1.5 rounded-md border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
             />
-            <select
+            <Select
+              size="sm"
               value={newProvider}
-              onChange={e => setNewProvider(e.target.value)}
-              className="px-2.5 py-1.5 rounded-md border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
-            >
-              {SUPPORTED_KEY_PROVIDERS.map(p => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
+              onChange={setNewProvider}
+              options={SUPPORTED_KEY_PROVIDERS.map(p => ({ value: p.id, label: p.label }))}
+            />
           </div>
           <div className="relative">
             <input
@@ -769,28 +764,20 @@ function LlmConfig() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Analysis Model</label>
-                    <select
+                    <Select
                       value={analysisModel || ANTHROPIC_MODELS[0].id}
-                      onChange={e => setAnalysisModel(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
-                    >
-                      {modelOptions(analysisModel).map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </select>
+                      onChange={setAnalysisModel}
+                      options={modelOptions(analysisModel).map(m => ({ value: m.id, label: m.label }))}
+                    />
                     <p className="text-[10px] font-mono text-text-dim mt-1">Fast + cheap. Used for failure root-cause analysis.</p>
                   </div>
                   <div>
                     <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Generation Model</label>
-                    <select
+                    <Select
                       value={generationModel || ANTHROPIC_MODELS[1].id}
-                      onChange={e => setGenerationModel(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
-                    >
-                      {modelOptions(generationModel).map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </select>
+                      onChange={setGenerationModel}
+                      options={modelOptions(generationModel).map(m => ({ value: m.id, label: m.label }))}
+                    />
                     <p className="text-[10px] font-mono text-text-dim mt-1">Higher quality. Used for pipeline generation.</p>
                   </div>
                 </div>
