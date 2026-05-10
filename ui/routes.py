@@ -31,6 +31,7 @@ router = APIRouter()
 # ── Jenkins health monitor ──────────────────────────────────────────────────
 
 _jenkins_monitor_task: asyncio.Task | None = None
+_jenkins_failure_poller_task: asyncio.Task | None = None
 
 
 async def _jenkins_health_monitor() -> None:
@@ -68,6 +69,90 @@ async def _jenkins_health_monitor() -> None:
             logger.info("Jenkins status changed → %s", "up" if ok else "down")
 
         await asyncio.sleep(10)
+
+
+# ── Jenkins failure poller — fallback when Notification Plugin doesn't fire ──
+
+async def _jenkins_failure_poller() -> None:
+    """
+    Poll all Jenkins jobs every 30s for newly-finished failed builds. Routes
+    each new failure through the same analysis pipeline as the Notification
+    Plugin webhook would. Dedups by (job, build) so a given failure analysis
+    runs at most once.
+
+    Why exists: Notification Plugin requires per-job config, can be silently
+    misconfigured / blocked by network policy / version-skewed. The poller
+    is best-effort but unconditional — works for any Jenkins setup.
+    """
+    import requests
+    from config import get_settings
+
+    seen: set[tuple[str, int]] = set()  # (job_name, build_number) already processed
+    primed = False  # First scan: prime seen set with existing builds (don't re-analyze history)
+
+    def _scan() -> list[tuple[str, int]]:
+        """Return list of (job, build_number) for failed builds that finished since last scan."""
+        s = get_settings()
+        if not s.jenkins_url or not s.jenkins_token:
+            return []
+        try:
+            # Get all jobs with their last completed build number + result
+            r = requests.get(
+                s.jenkins_url.rstrip('/') + '/api/json',
+                auth=(s.jenkins_user or '', s.jenkins_token),
+                params={"tree": "jobs[name,lastCompletedBuild[number,result]]"},
+                timeout=8,
+            )
+            if r.status_code != 200:
+                return []
+            new_failures = []
+            for job in r.json().get("jobs", []):
+                name = job.get("name")
+                last = job.get("lastCompletedBuild") or {}
+                num = last.get("number")
+                result = (last.get("result") or "").upper()
+                if not name or not num:
+                    continue
+                key = (name, int(num))
+                if result in ("FAILURE", "ABORTED", "UNSTABLE") and key not in seen:
+                    new_failures.append(key)
+                seen.add(key)
+            return new_failures
+        except Exception as e:
+            logger.debug("failure poller scan error: %s", e)
+            return []
+
+    # Lazy-import to avoid circular import at module load
+    from webhook.server import _process_notification_failure_sync
+
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            failures = await loop.run_in_executor(None, _scan)
+        except Exception as e:
+            logger.warning("failure poller error: %s", e)
+            failures = []
+
+        if not primed:
+            # First pass: only seed seen set, don't reprocess existing builds
+            primed = True
+            logger.info("Jenkins failure poller primed — tracking %d existing builds", len(seen))
+        elif failures:
+            for job, build in failures:
+                logger.info("Poller detected new failure: %s #%s — running analysis", job, build)
+                # Synthetic payload matches notification plugin shape so handler is identical
+                payload = {
+                    "name": job,
+                    "build": {"number": build, "phase": "FINALIZED", "status": "FAILURE"},
+                }
+                try:
+                    await loop.run_in_executor(
+                        None, _process_notification_failure_sync, job, str(build), payload,
+                    )
+                except Exception as e:
+                    logger.error("poller failed to process %s #%s: %s", job, build, e)
+
+        await asyncio.sleep(30)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
