@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings, Server, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle, Shield, Loader2, Eye, EyeOff } from 'lucide-react'
+import { Settings, Server, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle, Shield, Loader2, Eye, EyeOff, KeyRound, Trash2, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -95,6 +95,9 @@ export function SettingsPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
             </div>
           ))}
         </div>
+
+        {/* API Key Manager (multi-key, multi-provider) */}
+        <ApiKeysManager />
 
         {/* LLM Configuration (provider + key + Test/Save) */}
         <LlmConfig />
@@ -285,6 +288,312 @@ const ANTHROPIC_MODELS: { id: string; label: string }[] = [
   { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet 4.6 (balanced)' },
   { id: 'claude-opus-4-7',           label: 'Claude Opus 4.7 (most capable)' },
 ]
+
+interface ApiKey {
+  id: string
+  name: string
+  provider: string
+  key_preview: string
+  created_at: number
+  active: boolean
+}
+
+const SUPPORTED_KEY_PROVIDERS = [
+  { id: 'anthropic', label: 'Anthropic' },
+] as const
+
+function ApiKeysManager() {
+  const [keys, setKeys] = useState<ApiKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newProvider, setNewProvider] = useState<string>('anthropic')
+  const [newSecret, setNewSecret] = useState('')
+  const [showSecret, setShowSecret] = useState(false)
+  const [error, setError] = useState('')
+  const [busyId, setBusyId] = useState('')
+  // Switch-then-delete flow: when user tries to delete the active key, prompt
+  // them to pick a replacement from same-provider non-active keys first.
+  const [switchPrompt, setSwitchPrompt] = useState<{ keyId: string; provider: string } | null>(null)
+  const [pendingReplacement, setPendingReplacement] = useState<string>('')
+
+  function refresh() {
+    setLoading(true)
+    fetch('/api/llm-keys')
+      .then(r => r.json())
+      .then(d => setKeys(d.keys || []))
+      .catch(() => setKeys([]))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { refresh() }, [])
+
+  async function handleAdd() {
+    setError('')
+    if (!newName.trim() || !newSecret.trim()) {
+      setError('Name and key value are required.')
+      return
+    }
+    setAdding(true)
+    try {
+      const r = await fetch('/api/llm-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newName.trim(),
+          provider: newProvider,
+          key: newSecret.trim(),
+        }),
+      })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail || `HTTP ${r.status}`)
+        return
+      }
+      setNewName(''); setNewSecret(''); setShowSecret(false)
+      refresh()
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function handleActivate(id: string) {
+    setBusyId(id); setError('')
+    try {
+      const r = await fetch(`/api/llm-keys/${id}/activate`, { method: 'POST' })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail || `HTTP ${r.status}`)
+        return
+      }
+      refresh()
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  async function handleDelete(id: string) {
+    const target = keys.find(k => k.id === id)
+    if (!target) return
+    if (target.active) {
+      // Open switch-then-delete prompt (don't even call API; we'd just get 409)
+      setSwitchPrompt({ keyId: id, provider: target.provider })
+      setPendingReplacement('')
+      return
+    }
+    setBusyId(id); setError('')
+    try {
+      const r = await fetch(`/api/llm-keys/${id}`, { method: 'DELETE' })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        setError(d.detail || `HTTP ${r.status}`)
+        return
+      }
+      refresh()
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  async function confirmSwitchAndDelete() {
+    if (!switchPrompt || !pendingReplacement) return
+    setBusyId(switchPrompt.keyId); setError('')
+    try {
+      // 1. Activate replacement first
+      const a = await fetch(`/api/llm-keys/${pendingReplacement}/activate`, { method: 'POST' })
+      if (!a.ok) {
+        setError(`Could not activate replacement (HTTP ${a.status})`)
+        return
+      }
+      // 2. Now delete the previously-active key
+      const d = await fetch(`/api/llm-keys/${switchPrompt.keyId}`, { method: 'DELETE' })
+      if (!d.ok) {
+        const body = await d.json().catch(() => ({}))
+        setError(body.detail || `Delete failed HTTP ${d.status}`)
+        return
+      }
+      setSwitchPrompt(null)
+      setPendingReplacement('')
+      refresh()
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  // Group keys by provider for sectioned rendering
+  const grouped = keys.reduce<Record<string, ApiKey[]>>((acc, k) => {
+    (acc[k.provider] ||= []).push(k)
+    return acc
+  }, {})
+
+  return (
+    <div className="mt-6 rounded-2xl border border-accent-border/50 bg-white overflow-hidden shadow-card">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-accent-border/30 bg-overlay/30">
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white border border-accent-border/50">
+          <KeyRound className="h-4 w-4 text-accent" strokeWidth={1.75} />
+        </div>
+        <div>
+          <p className="text-[14px] font-bold text-text-primary leading-none">API Keys</p>
+          <p className="text-[11px] font-mono text-text-muted mt-1 leading-none">
+            Manage multiple keys per provider. Active key feeds the LLM.
+          </p>
+        </div>
+      </div>
+
+      <div className="px-5 py-5 space-y-5">
+        {/* Existing keys, grouped by provider */}
+        {loading ? (
+          <p className="text-[12px] font-mono text-text-dim">Loading…</p>
+        ) : keys.length === 0 ? (
+          <p className="text-[12px] font-mono text-text-dim">No keys yet. Add one below.</p>
+        ) : (
+          SUPPORTED_KEY_PROVIDERS.map(p => {
+            const list = grouped[p.id]
+            if (!list || list.length === 0) return null
+            return (
+              <div key={p.id}>
+                <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-2">{p.label}</p>
+                <div className="rounded-lg border border-accent-border/40 divide-y divide-accent-border/20">
+                  {list.map(k => (
+                    <div key={k.id} className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-semibold text-text-primary truncate">{k.name}</span>
+                          {k.active && (
+                            <span className="text-[9px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-success/15 text-success">
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] font-mono text-text-muted mt-0.5">{k.key_preview}</p>
+                      </div>
+                      {!k.active && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-[11px] h-7 px-2.5 font-mono"
+                          onClick={() => handleActivate(k.id)}
+                          disabled={busyId === k.id}
+                        >
+                          {busyId === k.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Activate'}
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-[11px] h-7 px-2 font-mono text-error hover:bg-error/10"
+                        onClick={() => handleDelete(k.id)}
+                        disabled={busyId === k.id}
+                        aria-label={`Delete ${k.name}`}
+                      >
+                        <Trash2 className="h-3 w-3" strokeWidth={2} />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })
+        )}
+
+        {/* Switch-then-delete confirm */}
+        {switchPrompt && (
+          <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 space-y-2">
+            <div className="flex gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 mt-0.5" strokeWidth={2} />
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                You're deleting the active key. Pick a replacement to activate first, then it'll be deleted.
+              </p>
+            </div>
+            <select
+              value={pendingReplacement}
+              onChange={e => setPendingReplacement(e.target.value)}
+              className="w-full px-2 py-1.5 rounded-md border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
+            >
+              <option value="">Choose replacement key…</option>
+              {keys
+                .filter(k => k.provider === switchPrompt.provider && k.id !== switchPrompt.keyId)
+                .map(k => (
+                  <option key={k.id} value={k.id}>{k.name} ({k.key_preview})</option>
+                ))}
+            </select>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="flex-1 text-[11px] h-7 font-mono border border-accent-border/40"
+                onClick={() => { setSwitchPrompt(null); setPendingReplacement('') }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="flex-1 text-[11px] h-7 font-mono bg-error hover:bg-error/90 text-white"
+                onClick={confirmSwitchAndDelete}
+                disabled={!pendingReplacement || busyId !== ''}
+              >
+                {busyId ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Switch & Delete'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Add new */}
+        <div className="rounded-lg border border-accent-border/40 p-3 space-y-2.5">
+          <p className="text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em]">Add Key</p>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="text"
+              placeholder="Name (e.g. work, personal)"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              className="px-2.5 py-1.5 rounded-md border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+            />
+            <select
+              value={newProvider}
+              onChange={e => setNewProvider(e.target.value)}
+              className="px-2.5 py-1.5 rounded-md border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
+            >
+              {SUPPORTED_KEY_PROVIDERS.map(p => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="relative">
+            <input
+              type={showSecret ? 'text' : 'password'}
+              placeholder={newProvider === 'anthropic' ? 'sk-ant-...' : 'API key'}
+              value={newSecret}
+              onChange={e => setNewSecret(e.target.value)}
+              autoComplete="off"
+              className="w-full px-2.5 py-1.5 pr-8 rounded-md border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSecret(s => !s)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text-base"
+              aria-label={showSecret ? 'Hide key' : 'Show key'}
+            >
+              {showSecret ? <EyeOff className="h-3 w-3" strokeWidth={2} /> : <Eye className="h-3 w-3" strokeWidth={2} />}
+            </button>
+          </div>
+          {error && (
+            <p className="text-[11px] font-mono text-error">{error}</p>
+          )}
+          <Button
+            size="sm"
+            className="w-full text-[11px] h-8 font-mono gap-1.5 bg-accent hover:bg-accent-hi text-white"
+            onClick={handleAdd}
+            disabled={adding || !newName.trim() || !newSecret.trim()}
+          >
+            {adding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" strokeWidth={2.5} />}
+            {adding ? 'Adding…' : 'Add Key'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function modelOptions(currentValue: string): { id: string; label: string }[] {
   if (!currentValue || ANTHROPIC_MODELS.some(m => m.id === currentValue)) return ANTHROPIC_MODELS

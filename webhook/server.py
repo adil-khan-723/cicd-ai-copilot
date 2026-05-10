@@ -622,6 +622,7 @@ def _process_failure_sync(payload: dict, source: str) -> None:
             "potential_issues": filtered_potential_issues,
             "model_used": analysis.get("model_used", ""),
             "provider_used": analysis.get("provider_used", ""),
+            "key_name": analysis.get("key_name", ""),
             "pipeline_stages": [
                 {"name": name, "status": status}
                 for name, status in ctx.pipeline_stages

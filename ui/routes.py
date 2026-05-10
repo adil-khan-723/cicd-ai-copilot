@@ -439,6 +439,49 @@ async def rename_profile(profile_id: str, body: dict):
     return {"ok": True}
 
 
+# ── LLM API key manager (multi-key, multi-provider) ────────────────────────
+
+class LLMKeyPayload(BaseModel):
+    name: str
+    provider: str  # 'anthropic' (more later)
+    key: str
+
+
+@router.get("/api/llm-keys")
+async def list_llm_keys():
+    from ui.llm_keys_store import list_keys
+    return {"keys": list_keys()}
+
+
+@router.post("/api/llm-keys")
+async def create_llm_key(payload: LLMKeyPayload):
+    from ui.llm_keys_store import add_key
+    try:
+        key = add_key(payload.name, payload.provider, payload.key)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True, "key": key}
+
+
+@router.post("/api/llm-keys/{key_id}/activate")
+async def activate_llm_key(key_id: str):
+    from ui.llm_keys_store import activate_key
+    if not activate_key(key_id):
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"ok": True}
+
+
+@router.delete("/api/llm-keys/{key_id}")
+async def delete_llm_key(key_id: str):
+    from ui.llm_keys_store import delete_key
+    ok, err = delete_key(key_id)
+    if not ok:
+        # 409 if blocked (active), 404 if missing
+        status = 404 if "not found" in err.lower() else 409
+        raise HTTPException(status_code=status, detail=err)
+    return {"ok": True}
+
+
 # ── Credential test-connection ─────────────────────────────────────────────
 
 class TestConnectionPayload(BaseModel):
@@ -834,12 +877,14 @@ async def reanalyze(payload: ReanalyzePayload):
         "potential_issues": filtered,
         "model_used": analysis.get("model_used", ""),
         "provider_used": analysis.get("provider_used", ""),
+        "key_name": analysis.get("key_name", ""),
         "reanalyzed": True,
     })
     return {
         "ok": True,
         "model_used": analysis.get("model_used", ""),
         "provider_used": analysis.get("provider_used", ""),
+        "key_name": analysis.get("key_name", ""),
     }
 
 
