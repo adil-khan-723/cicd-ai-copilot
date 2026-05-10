@@ -495,12 +495,74 @@ async def create_profile(payload: ProfilePayload):
 
 
 @router.post("/api/profiles/{profile_id}/activate")
-async def activate_profile(profile_id: str):
+async def activate_profile(profile_id: str, request: Request):
     from ui.profiles_store import activate_profile
     ok = activate_profile(profile_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Profile not found")
+
+    # Fire-and-forget: auto-configure Jenkins for webhook delivery so the user
+    # never has to click the Settings → "Configure Jenkins for Webhooks" button
+    # in the common case. Failures are logged + surfaced via SSE; we do NOT
+    # block the activate response on this (Jenkins may be slow / plugins may
+    # need restart / network may be flaky).
+    asyncio.create_task(_auto_setup_jenkins_in_background(request))
+
     return {"ok": True}
+
+
+async def _auto_setup_jenkins_in_background(request: Request) -> None:
+    """Run jenkins_setup.configure_jenkins_for_webhooks asynchronously.
+    Publishes a step event with summary so the UI can show what happened."""
+    from ui.jenkins_setup import configure_jenkins_for_webhooks
+    from ui.event_bus import bus
+    s = get_settings()
+    if not s.jenkins_url or not s.jenkins_token:
+        return  # nothing to set up
+
+    base = (s.public_base_url or "").strip()
+    if not base:
+        host_header = request.headers.get("host", "").split(":")[0] or "localhost"
+        base = f"{request.url.scheme}://{host_header}:{s.webhook_port}"
+    base = base.rstrip("/")
+    webhook_url = f"{base}/webhook/jenkins-notification"
+
+    try:
+        loop = asyncio.get_event_loop()
+        report = await loop.run_in_executor(
+            None,
+            configure_jenkins_for_webhooks,
+            s.jenkins_url, s.jenkins_user or "", s.jenkins_token, webhook_url,
+        )
+        # Surface a summary as a step event so the UI feed shows it
+        bits = []
+        if report.plugins_installed:
+            bits.append(f"installed plugins: {', '.join(report.plugins_installed)}")
+        if report.jobs_configured:
+            bits.append(f"configured {len(report.jobs_configured)} job(s)")
+        if not bits and not report.errors:
+            bits.append("Jenkins already wired up")
+        if report.errors:
+            bits.append(f"errors: {len(report.errors)}")
+
+        bus.publish({
+            "type": "jenkins_auto_setup",
+            "ok": report.ok,
+            "summary": "; ".join(bits),
+            "plugins_installed": report.plugins_installed,
+            "jobs_configured": report.jobs_configured,
+            "errors": report.errors,
+            "restart_required": report.restart_required,
+        })
+        logger.info("Auto Jenkins setup: %s", "; ".join(bits))
+    except Exception as e:
+        logger.warning("Background Jenkins auto-setup failed: %s", e)
+        bus.publish({
+            "type": "jenkins_auto_setup",
+            "ok": False,
+            "summary": f"auto-setup failed: {e}",
+            "errors": [str(e)],
+        })
 
 
 # ── Jenkins auto-setup (notification webhook + plugins) ────────────────────
