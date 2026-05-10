@@ -69,63 +69,73 @@ class TestOllamaProvider:
 # Anthropic provider
 # ---------------------------------------------------------------------------
 
-class TestAnthropicProvider:
-    def _make_provider(self, api_key="sk-ant-test"):
-        with patch("providers.anthropic_provider.get_settings") as mock_settings:
-            mock_settings.return_value.anthropic_api_key = api_key
-            mock_settings.return_value.anthropic_analysis_model = "claude-haiku-4-5-20251001"
-            mock_settings.return_value.anthropic_generation_model = "claude-sonnet-4-6"
-            return AnthropicProvider(model="claude-haiku-4-5-20251001")
+@pytest.fixture
+def mock_anthropic_settings():
+    """Patch get_settings for the full test so _settings property reads mocks."""
+    with patch("providers.anthropic_provider.get_settings") as mock_settings:
+        mock_settings.return_value.anthropic_api_key = "sk-ant-test"
+        mock_settings.return_value.anthropic_analysis_model = "claude-haiku-4-5-20251001"
+        mock_settings.return_value.anthropic_generation_model = "claude-sonnet-4-6"
+        yield mock_settings
 
-    def test_name_includes_model(self):
-        p = self._make_provider()
+
+def _inject_mock_client(provider, mock_client):
+    """Helper: install mock client + sync key snapshot so _get_client doesn't rebuild."""
+    provider._client = mock_client
+    provider._client_key = provider._settings.anthropic_api_key
+
+
+class TestAnthropicProvider:
+    def test_name_includes_model(self, mock_anthropic_settings):
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
         assert "claude-haiku" in p.name
 
-    def test_complete_returns_text(self):
-        p = self._make_provider()
+    def test_complete_returns_text(self, mock_anthropic_settings):
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text="Analysis result")]
         mock_client.messages.create.return_value = mock_response
-        p._client = mock_client
+        _inject_mock_client(p, mock_client)
 
         result = p.complete("Analyze this log", system="You are an expert")
         assert result == "Analysis result"
         call_kwargs = mock_client.messages.create.call_args.kwargs
         assert call_kwargs["system"] == "You are an expert"
 
-    def test_complete_raises_on_auth_error(self):
+    def test_complete_raises_on_auth_error(self, mock_anthropic_settings):
         import anthropic as sdk
-        p = self._make_provider()
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = sdk.AuthenticationError(
             message="Invalid key", response=MagicMock(), body={}
         )
-        p._client = mock_client
+        _inject_mock_client(p, mock_client)
         with pytest.raises(RuntimeError, match="invalid"):
             p.complete("test")
 
-    def test_is_available_false_when_no_key(self):
-        p = self._make_provider(api_key="")
+    def test_is_available_false_when_no_key(self, mock_anthropic_settings):
+        mock_anthropic_settings.return_value.anthropic_api_key = ""
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
         assert p.is_available() is False
 
-    def test_is_available_true_when_models_list_succeeds(self):
-        p = self._make_provider(api_key="sk-ant-test")
+    def test_is_available_true_when_models_list_succeeds(self, mock_anthropic_settings):
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
         mock_client = MagicMock()
         mock_client.models.list.return_value = []
-        p._client = mock_client
+        _inject_mock_client(p, mock_client)
         assert p.is_available() is True
 
-    def test_is_available_false_when_api_error(self):
-        p = self._make_provider(api_key="sk-ant-test")
+    def test_is_available_false_when_api_error(self, mock_anthropic_settings):
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
         mock_client = MagicMock()
         mock_client.models.list.side_effect = Exception("network error")
-        p._client = mock_client
+        _inject_mock_client(p, mock_client)
         assert p.is_available() is False
 
-    def test_anthropic_stream_complete_yields_multiple_chunks(self):
+    def test_anthropic_stream_complete_yields_multiple_chunks(self, mock_anthropic_settings):
         """stream_complete must yield multiple chunks, not one big blob."""
-        p = self._make_provider()
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
         mock_stream = MagicMock()
         mock_stream.__enter__ = MagicMock(return_value=mock_stream)
         mock_stream.__exit__ = MagicMock(return_value=False)
@@ -134,13 +144,28 @@ class TestAnthropicProvider:
         mock_client = MagicMock()
         mock_client.messages.stream.return_value = mock_stream
 
-        p._client = mock_client
+        _inject_mock_client(p, mock_client)
 
         chunks = list(p.stream_complete("say hello"))
 
         assert len(chunks) > 1, f"Expected multiple chunks, got {len(chunks)}: {chunks}"
         assert "".join(chunks) == "Hello world!"
         mock_client.messages.stream.assert_called_once()
+
+    def test_client_rebuilds_when_key_changes(self, mock_anthropic_settings):
+        """Settings UI hot-reload: changing the key in .env must rebuild the client."""
+        p = AnthropicProvider(model="claude-haiku-4-5-20251001")
+        with patch("anthropic.Anthropic") as mock_sdk:
+            mock_sdk.return_value = MagicMock()
+            p._get_client()
+            assert mock_sdk.call_count == 1
+            # Same key — client cached
+            p._get_client()
+            assert mock_sdk.call_count == 1
+            # Key changed → rebuild
+            mock_anthropic_settings.return_value.anthropic_api_key = "sk-ant-different"
+            p._get_client()
+            assert mock_sdk.call_count == 2
 
 
 # ---------------------------------------------------------------------------
