@@ -66,6 +66,7 @@ export interface AnalysisCompleteEvent {
   potential_issues?: PotentialIssue[]
   model_used?: string
   provider_used?: string
+  key_name?: string
   reanalyzed?: boolean
 }
 

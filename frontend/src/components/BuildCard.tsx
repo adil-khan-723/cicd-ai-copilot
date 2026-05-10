@@ -354,10 +354,18 @@ export function BuildCard({ card, isLatestFailing, onDismiss, onOpenDetail, onOp
                   {analysis.model_used && (
                     <span
                       className="text-[10px] font-mono text-text-muted bg-overlay/60 border border-accent-border/30 rounded-md px-1.5 py-0.5"
-                      title={`Analyzed by ${analysis.provider_used ?? '?'} / ${analysis.model_used}${analysis.reanalyzed ? ' (re-analyzed)' : ''}`}
+                      title={`Analyzed by ${analysis.provider_used ?? '?'} / ${analysis.model_used}${analysis.key_name ? ` using key '${analysis.key_name}'` : ''}${analysis.reanalyzed ? ' (re-analyzed)' : ''}`}
                     >
                       {analysis.provider_used === 'anthropic' ? '🧠' : '🦙'} {analysis.model_used}
                       {analysis.reanalyzed && <span className="ml-1 text-accent">↻</span>}
+                    </span>
+                  )}
+                  {analysis.key_name && (
+                    <span
+                      className="text-[10px] font-mono text-accent bg-accent/10 border border-accent/20 rounded-md px-1.5 py-0.5"
+                      title={`API key: ${analysis.key_name}`}
+                    >
+                      🔑 {analysis.key_name}
                     </span>
                   )}
                   <span className="flex items-center gap-1 text-[11px] font-mono text-text-dim">

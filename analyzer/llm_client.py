@@ -13,6 +13,18 @@ from analyzer.response_parser import parse_analysis_response
 
 logger = logging.getLogger(__name__)
 
+def _active_key_name(provider_name: str) -> str:
+    """Return the name of the active key in the LLM key manager for a provider,
+    or empty string if no key registered. Provider names look like 'anthropic/claude-...'."""
+    try:
+        provider = provider_name.split("/", 1)[0].lower()
+        from ui.llm_keys_store import get_active_key
+        active = get_active_key(provider)
+        return active.get("name", "") if active else ""
+    except Exception:
+        return ""
+
+
 _PROVIDER_UNAVAILABLE = {
     "root_cause": "No LLM provider is available.",
     "fix_suggestion": (
@@ -75,6 +87,9 @@ def analyze(
     # Stamp which model + provider produced this result so the UI can show + offer re-run
     result["provider_used"] = provider.name
     result["model_used"] = getattr(provider, "_model", "")
+    # Stamp which named API key was used (multi-key manager). Empty for ollama or
+    # when no key registered in the key manager (e.g. raw .env fallback).
+    result["key_name"] = _active_key_name(provider.name)
 
     # Only cache the default-routed result. Overrides are one-shot.
     if not using_override:
