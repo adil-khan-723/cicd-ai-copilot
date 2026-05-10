@@ -28,11 +28,14 @@ This agent handles that loop. It receives the failure webhook, isolates the fail
 - [What It Can and Cannot Fix](#what-it-can-and-cannot-fix)
 - [Credential and Secrets Handling](#credential-and-secrets-handling)
 - [Quick Start](#quick-start)
+- [Web UI Features](#web-ui-features)
 - [Configuration Reference](#configuration-reference)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Cost](#cost)
 - [Developer](#developer)
+
+For an end-user walkthrough (setup wizard, daily workflow, troubleshooting), see [USER_GUIDE.md](USER_GUIDE.md).
 
 ---
 
@@ -215,14 +218,19 @@ Or native (no Docker):
 
 `start.sh` handles Docker socket permissions for Jenkins-in-Docker automatically. See [Docker socket section](#docker-socket-access) below.
 
-### 3. Configure Jenkins webhook
+### 3. Configure Jenkins (one-click, automatic)
 
-In Jenkins → Job → Configure → Post-build actions → HTTP Request:
+Open the web UI at `http://localhost:8000`, save your Jenkins URL + credentials in the setup wizard. The agent automatically:
 
-```
-URL:    http://your-agent-host:8000/webhook
-Method: POST
-```
+1. Installs the `notification` + `junit` plugins (junit is a hard runtime dep of the notification plugin's `getTestResults()` — silently fails without it)
+2. Patches every existing job's `config.xml` to point its notification endpoint at `http://your-agent-host:8000/webhook/jenkins-notification`
+3. Sets the correct `event=all` + `branch=.*` fields (legacy plugin requires both populated to actually fire — wrong/missing values cause silent skip)
+
+If Jenkins lives on a different host than the agent, set `PUBLIC_BASE_URL` in `.env` so the auto-setup uses the right callback URL.
+
+To re-run manually (e.g. after adding new jobs in Jenkins): **Settings → Jenkins Webhook Setup → "Configure Jenkins for Webhooks"**.
+
+A 30s background poller also scans Jenkins for new failures as a fallback in case the notification plugin fails — every failure analysis runs at most once thanks to dedup.
 
 ### 4. Pull local models (optional — skip if using Anthropic)
 
@@ -236,6 +244,25 @@ Models stored on external SSD:
 ```bash
 export OLLAMA_MODELS=/Volumes/YourSSD/ollama-models
 ```
+
+---
+
+## Web UI Features
+
+### Multi-profile Jenkins management
+Save credentials for multiple Jenkins instances (production, staging, client-A). Switching the active profile rewires `.env`, hot-reloads settings, and clears the SSE feed so cards from another profile don't bleed in. Per-profile chat history persists in browser localStorage keyed on `profile.id`. Re-running the setup wizard against the same Jenkins URL+user is idempotent — same id is reused, chats survive.
+
+### Multi-key API key manager
+Manage multiple API keys per provider (Anthropic now, provider-agnostic schema). Each key has a name (`work`, `personal`, `client-X`) and an active flag. Activating a key writes to `.env` and clears the settings cache so the next call hot-reloads — no server restart. Deleting the active key triggers a switch-then-delete confirmation: pick a replacement, system activates it, then deletes the old. Per-analysis tracking: `analysis_complete` events stamp `key_name` and the BuildCard shows a 🔑 badge for cost attribution.
+
+### Per-analysis model picker
+Re-analyze any build with a different LLM model without changing global settings. BuildCard's "Re-analyze with…" dropdown lists available providers + models. The override is one-shot (bypasses cache, never written to `.env`). Result event stamps `model_used`, `provider_used`, `key_name`, `reanalyzed: true` so the UI can show ↻ alongside the model badge.
+
+### LLM model dropdowns
+Free-text model fields became locked dropdowns to eliminate typos. Anthropic: Haiku 4.5 / Sonnet 4.6 / Opus 4.7. Ollama: single text field that mirrors to both `analysis_model` and `generation_model`. Legacy/unknown saved values surface as `(legacy)` so they're not silently discarded.
+
+### Jenkins connection test
+Setup wizard "Test Connection" button validates URL + credentials before save. Distinguishes auth failure (401/403), wrong endpoint (404), connection timeout, and shows Jenkins version on success. Auth method radio (API Token / Password) shows a soft format warning when secret pattern doesn't match selected type.
 
 ---
 
@@ -277,6 +304,9 @@ GITHUB_REPO=owner/repo                       # active project repo
 WEBHOOK_PORT=8000
 WEBHOOK_SECRET=                              # shared secret for webhook validation
 WEBHOOK_HOST=0.0.0.0
+# Public URL Jenkins should use to call this app (only needed when Jenkins
+# is on a different host). Auto-detected from request when blank.
+PUBLIC_BASE_URL=                             # e.g. http://13.201.3.80:8000
 
 # ── CACHING ───────────────────────────────────────────────────────────────
 REDIS_URL=                                   # blank = in-memory fallback
