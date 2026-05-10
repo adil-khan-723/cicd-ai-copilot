@@ -46,16 +46,20 @@ async def lifespan(app: FastAPI):
     analysis_cache.clear_all()
     logger.info("LLM response cache cleared on startup")
 
-    from ui.routes import _jenkins_health_monitor
+    from ui.routes import _jenkins_health_monitor, _jenkins_failure_poller
     import ui.routes as _ui_routes
     _ui_routes._jenkins_monitor_task = asyncio.create_task(_jenkins_health_monitor())
     logger.info("Jenkins health monitor started (10s poll)")
+    _ui_routes._jenkins_failure_poller_task = asyncio.create_task(_jenkins_failure_poller())
+    logger.info("Jenkins failure poller started (30s poll, fallback for Notification Plugin)")
 
     yield
 
     import ui.routes as _ui_routes
     if _ui_routes._jenkins_monitor_task:
         _ui_routes._jenkins_monitor_task.cancel()
+    if _ui_routes._jenkins_failure_poller_task:
+        _ui_routes._jenkins_failure_poller_task.cancel()
 
 
 app = FastAPI(title="DevOps AI Agent — Webhook Server", lifespan=lifespan)
