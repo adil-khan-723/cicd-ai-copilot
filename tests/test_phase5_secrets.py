@@ -237,16 +237,55 @@ class TestTestConnectionEndpoint:
         assert "[REDACTED" in r.json().get("detail", "")
 
     def test_anthropic_ok(self, client):
-        with patch("providers.anthropic_provider.AnthropicProvider.is_available", return_value=True):
-            r = client.post("/api/secrets/test-connection", json={"provider": "anthropic"})
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        mock_client.models.list.return_value = MagicMock()
+        with patch("config.get_settings") as gs:
+            gs.return_value.anthropic_api_key = "sk-ant-test123"
+            gs.return_value.jenkins_url = ""
+            gs.return_value.jenkins_token = ""
+            gs.return_value.ollama_base_url = ""
+            with patch("anthropic.Anthropic", return_value=mock_client):
+                r = client.post("/api/secrets/test-connection", json={"provider": "anthropic"})
         assert r.status_code == 200
         assert r.json()["ok"] is True
 
     def test_anthropic_fail(self, client):
-        with patch("providers.anthropic_provider.AnthropicProvider.is_available", return_value=False):
-            r = client.post("/api/secrets/test-connection", json={"provider": "anthropic"})
+        import anthropic as _anthropic
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        mock_client.models.list.side_effect = _anthropic.AuthenticationError(
+            message="bad key", response=MagicMock(status_code=401), body={"error": "invalid"}
+        )
+        with patch("config.get_settings") as gs:
+            gs.return_value.anthropic_api_key = "sk-ant-bad"
+            gs.return_value.jenkins_url = ""
+            gs.return_value.jenkins_token = ""
+            gs.return_value.ollama_base_url = ""
+            with patch("anthropic.Anthropic", return_value=mock_client):
+                r = client.post("/api/secrets/test-connection", json={"provider": "anthropic"})
         assert r.status_code == 200
         assert r.json()["ok"] is False
+        assert "Authentication failed" in r.json()["detail"]
+
+    def test_anthropic_with_unsaved_key_in_payload(self, client):
+        """Test before Save: payload api_key should be used if no saved key."""
+        from unittest.mock import MagicMock
+        mock_client = MagicMock()
+        mock_client.models.list.return_value = MagicMock()
+        with patch("config.get_settings") as gs:
+            gs.return_value.anthropic_api_key = ""  # not saved yet
+            gs.return_value.jenkins_url = ""
+            gs.return_value.jenkins_token = ""
+            gs.return_value.ollama_base_url = ""
+            with patch("anthropic.Anthropic", return_value=mock_client) as mk:
+                r = client.post(
+                    "/api/secrets/test-connection",
+                    json={"provider": "anthropic", "api_key": "sk-ant-newone"},
+                )
+        assert r.json()["ok"] is True
+        # Verify the unsaved key was actually used, not the (empty) saved one
+        mk.assert_called_with(api_key="sk-ant-newone")
 
     def test_ollama_provider(self, client):
         with patch("providers.ollama_provider.OllamaProvider.is_available", return_value=True):
