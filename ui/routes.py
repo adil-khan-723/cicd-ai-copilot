@@ -447,6 +447,12 @@ class TestConnectionPayload(BaseModel):
     # Never stored — used only for the test call.
     api_key: str = ""
     base_url: str = ""
+    # Optional unsaved Jenkins creds (lets user click Test before Save in setup).
+    # If url is provided, these override saved settings for the test only.
+    jenkins_url: str = ""
+    jenkins_user: str = ""
+    jenkins_token: str = ""
+    jenkins_auth_method: str = "token"  # 'token' | 'password' — both flow as basic auth
 
 
 @router.post("/api/secrets/test-connection")
@@ -464,17 +470,36 @@ async def test_connection(payload: TestConnectionPayload):
 
     if provider == "jenkins":
         def _ping():
-            if not s.jenkins_url or not s.jenkins_token:
-                return False, "Jenkins not configured — set JENKINS_URL and JENKINS_TOKEN."
+            # Prefer unsaved payload creds (Test before Save in setup wizard);
+            # else fall back to saved settings.
+            url = (payload.jenkins_url or s.jenkins_url or "").strip()
+            user = (payload.jenkins_user or s.jenkins_user or "").strip()
+            token = (payload.jenkins_token or s.jenkins_token or "").strip()
+            if not url or not token:
+                return False, "Jenkins URL and credential required."
+            if not (url.startswith("http://") or url.startswith("https://")):
+                return False, "Jenkins URL must start with http:// or https://."
             try:
                 r = _req.get(
-                    s.jenkins_url.rstrip("/") + "/api/json",
-                    auth=(s.jenkins_user or "", s.jenkins_token),
+                    url.rstrip("/") + "/api/json",
+                    auth=(user, token),
                     timeout=6,
                 )
-                if r.status_code < 500:
-                    return True, "Jenkins reachable."
-                return False, scrub(f"HTTP {r.status_code}: {r.text[:120]}")
+                if r.status_code == 401 or r.status_code == 403:
+                    return False, f"Authentication failed (HTTP {r.status_code}) — check user and {'token' if payload.jenkins_auth_method == 'token' else 'password'}."
+                if r.status_code == 404:
+                    return False, "HTTP 404 — URL reachable but /api/json missing. Is this really Jenkins?"
+                if r.status_code >= 500:
+                    return False, scrub(f"Jenkins error HTTP {r.status_code}.")
+                if r.status_code >= 400:
+                    return False, scrub(f"HTTP {r.status_code}: {r.text[:120]}")
+                version = r.headers.get("X-Jenkins", "")
+                msg = f"Jenkins reachable (v{version})." if version else "Jenkins reachable."
+                return True, msg
+            except _req.exceptions.ConnectTimeout:
+                return False, "Connection timed out — host unreachable or firewalled."
+            except _req.exceptions.ConnectionError as e:
+                return False, scrub(f"Connection failed: {e}")
             except Exception as e:
                 return False, scrub(str(e))
 

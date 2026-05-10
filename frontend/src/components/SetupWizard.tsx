@@ -52,18 +52,25 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
   }
 
   async function testJenkins() {
-    if (!form.jenkins_url.trim()) return
+    if (!form.jenkins_url.trim() || !form.jenkins_token.trim()) return
     setJenkinsTestState('testing')
     setJenkinsTestDetail('')
     try {
       const r = await fetch('/api/secrets/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: 'jenkins' }),
+        body: JSON.stringify({
+          provider: 'jenkins',
+          jenkins_url: form.jenkins_url.trim(),
+          jenkins_user: form.jenkins_user.trim(),
+          jenkins_token: form.jenkins_token.trim(),
+          jenkins_auth_method: form.jenkins_auth_method,
+        }),
       })
       const data = await r.json()
       setJenkinsTestState(data?.ok ? 'ok' : 'fail')
       if (!data?.ok && data?.detail) setJenkinsTestDetail(data.detail)
+      else if (data?.ok && data?.detail) setJenkinsTestDetail(data.detail)
     } catch {
       setJenkinsTestState('fail')
       setJenkinsTestDetail('Network error')
@@ -171,22 +178,7 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                       placeholder="https://jenkins.example.com"
                       value={form.jenkins_url}
                       onChange={e => { set('jenkins_url')(e); setJenkinsTestState('idle') }}
-                      onBlur={testJenkins}
                     />
-                    {jenkinsTestState !== 'idle' && (
-                      <div className="flex items-center gap-1.5 mt-1.5">
-                        {jenkinsTestState === 'testing' && <Loader2 className="h-3 w-3 text-text-dim animate-spin" />}
-                        {jenkinsTestState === 'ok'      && <CheckCircle2 className="h-3 w-3 text-success" strokeWidth={2} />}
-                        {jenkinsTestState === 'fail'    && <XCircle className="h-3 w-3 text-error" strokeWidth={2} />}
-                        <span className={`text-[10px] font-mono ${jenkinsTestState === 'ok' ? 'text-success' : jenkinsTestState === 'fail' ? 'text-error' : 'text-text-dim'}`}>
-                          {jenkinsTestState === 'testing'
-                            ? 'Connecting…'
-                            : jenkinsTestState === 'ok'
-                            ? 'Connected'
-                            : jenkinsTestDetail || 'Cannot reach Jenkins'}
-                        </span>
-                      </div>
-                    )}
                   </div>
                   {/* Auth method radio */}
                   <div>
@@ -213,15 +205,44 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                       label="Username"
                       placeholder="admin"
                       value={form.jenkins_user}
-                      onChange={set('jenkins_user')}
+                      onChange={e => { set('jenkins_user')(e); setJenkinsTestState('idle') }}
                     />
                     <Input
                       label={form.jenkins_auth_method === 'password' ? 'Password' : 'API Token'}
                       type="password"
                       placeholder="••••••••"
                       value={form.jenkins_token}
-                      onChange={set('jenkins_token')}
+                      onChange={e => { set('jenkins_token')(e); setJenkinsTestState('idle') }}
                     />
+                  </div>
+
+                  {/* Test connection */}
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={testJenkins}
+                      disabled={jenkinsTestState === 'testing' || !form.jenkins_url.trim() || !form.jenkins_token.trim()}
+                    >
+                      {jenkinsTestState === 'testing' ? (
+                        <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Testing…</>
+                      ) : (
+                        'Test Connection'
+                      )}
+                    </Button>
+                    {jenkinsTestState !== 'idle' && jenkinsTestState !== 'testing' && (
+                      <div className="flex items-start gap-1.5 mt-2">
+                        {jenkinsTestState === 'ok'   && <CheckCircle2 className="h-3 w-3 text-success shrink-0 mt-0.5" strokeWidth={2} />}
+                        {jenkinsTestState === 'fail' && <XCircle className="h-3 w-3 text-error shrink-0 mt-0.5" strokeWidth={2} />}
+                        <span className={`text-[10px] font-mono leading-relaxed ${jenkinsTestState === 'ok' ? 'text-success' : 'text-error'}`}>
+                          {jenkinsTestState === 'ok'
+                            ? (jenkinsTestDetail || 'Connected')
+                            : (jenkinsTestDetail || 'Cannot reach Jenkins')}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Hint */}
