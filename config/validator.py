@@ -9,11 +9,15 @@ logger = logging.getLogger(__name__)
 
 
 def validate_config(settings: Settings) -> None:
+    """
+    Soft-validate startup config. Never exits — server must boot so the user
+    can fix missing config via the Settings UI without shell access.
+    """
     if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
-        raise SystemExit(
-            "ERROR: ANTHROPIC_API_KEY not set.\n"
-            "Set it in .env or as an environment variable.\n"
-            "Get your key at https://console.anthropic.com"
+        logger.warning(
+            "ANTHROPIC_API_KEY not set — LLM calls will fail until configured. "
+            "Set it via Settings → LLM Configuration in the UI, or in .env. "
+            "Get a key at https://console.anthropic.com"
         )
 
 
