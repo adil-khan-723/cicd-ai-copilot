@@ -43,6 +43,7 @@ def save_credentials(payload: dict) -> None:
     """
     Write credentials to .env and reload settings cache.
     Existing .env keys are updated in-place; unknown keys are preserved.
+    Accepts optional 'jenkins_auth_method' ('token' | 'password').
     """
     validate_setup_payload(payload)
 
@@ -52,9 +53,17 @@ def save_credentials(payload: dict) -> None:
         "JENKINS_TOKEN": payload["jenkins_token"].strip(),
     }
 
+    auth_method = str(payload.get("jenkins_auth_method", "token")).strip().lower()
+    if auth_method not in ("token", "password"):
+        auth_method = "token"
+    mapping["JENKINS_AUTH_METHOD"] = auth_method
+
     _write_env(mapping)
     _clear_settings_cache()
-    logger.info("Setup credentials saved for jenkins=%s", payload["jenkins_url"])
+    logger.info(
+        "Setup credentials saved for jenkins=%s (auth_method=%s)",
+        payload["jenkins_url"], auth_method,
+    )
 
 
 def save_llm_config(payload: dict) -> None:

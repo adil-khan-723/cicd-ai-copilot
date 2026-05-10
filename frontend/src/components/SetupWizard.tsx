@@ -14,10 +14,11 @@ interface SetupWizardProps {
 
 export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWizardProps) {
   const [form, setForm] = useState<SetupFormData>({
-    alias:         initialData?.alias         ?? '',
-    jenkins_url:   initialData?.jenkins_url   ?? '',
-    jenkins_user:  initialData?.jenkins_user  ?? '',
-    jenkins_token: initialData?.jenkins_token ?? '',
+    alias:               initialData?.alias               ?? '',
+    jenkins_url:         initialData?.jenkins_url         ?? '',
+    jenkins_user:        initialData?.jenkins_user        ?? '',
+    jenkins_token:       initialData?.jenkins_token       ?? '',
+    jenkins_auth_method: initialData?.jenkins_auth_method ?? 'token',
   })
   const [error,             setError]             = useState('')
   const [loading,           setLoading]           = useState(false)
@@ -187,6 +188,26 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                       </div>
                     )}
                   </div>
+                  {/* Auth method radio */}
+                  <div>
+                    <span className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1.5 block">Auth method</span>
+                    <div className="flex gap-2">
+                      {(['token', 'password'] as const).map(m => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, jenkins_auth_method: m }))}
+                          className={`flex-1 py-1.5 rounded-md text-[11px] font-semibold border transition-all duration-150 cursor-pointer ${
+                            form.jenkins_auth_method === m
+                              ? 'bg-accent border-accent text-white'
+                              : 'bg-white border-accent-border/40 text-text-base hover:bg-overlay/30'
+                          }`}
+                        >
+                          {m === 'token' ? 'API Token (recommended)' : 'Password'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Input
                       label="Username"
@@ -195,7 +216,7 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                       onChange={set('jenkins_user')}
                     />
                     <Input
-                      label="API Token"
+                      label={form.jenkins_auth_method === 'password' ? 'Password' : 'API Token'}
                       type="password"
                       placeholder="••••••••"
                       value={form.jenkins_token}
@@ -207,11 +228,21 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                   <div className="flex gap-2.5 rounded-lg border border-info/15 bg-info-dim p-3">
                     <Info className="h-3.5 w-3.5 text-info shrink-0 mt-0.5" />
                     <p className="text-[11px] text-text-muted leading-relaxed">
-                      The <span className="text-text-primary font-medium">API Token</span> is not
-                      your Jenkins password. Get one at{' '}
-                      <em className="not-italic text-info">
-                        [Your name] (top-right) → Security → API Token → Add new Token → Generate
-                      </em>.
+                      {form.jenkins_auth_method === 'password' ? (
+                        <>
+                          Using your Jenkins login <span className="text-text-primary font-medium">password</span>.
+                          Works for all features but <span className="text-warning">not recommended</span> —
+                          API tokens are revocable per-integration and survive 2FA / SSO.
+                        </>
+                      ) : (
+                        <>
+                          The <span className="text-text-primary font-medium">API Token</span> is not your
+                          Jenkins password. Get one at{' '}
+                          <em className="not-italic text-info">
+                            [Your name] (top-right) → Security → API Token → Add new Token → Generate
+                          </em>.
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>

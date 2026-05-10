@@ -71,15 +71,25 @@ def get_active_profile() -> Optional[dict]:
     return None
 
 
-def add_profile(alias: str, jenkins_url: str, jenkins_user: str, jenkins_token: str) -> dict:
+def add_profile(
+    alias: str,
+    jenkins_url: str,
+    jenkins_user: str,
+    jenkins_token: str,
+    jenkins_auth_method: str = "token",
+) -> dict:
     profiles = _load()
     profile_id = str(uuid.uuid4())
+    method = (jenkins_auth_method or "token").strip().lower()
+    if method not in ("token", "password"):
+        method = "token"
     profile = {
         "id": profile_id,
         "alias": alias.strip(),
         "jenkins_url": jenkins_url.strip().rstrip("/"),
         "jenkins_user": jenkins_user.strip(),
         "jenkins_token": jenkins_token.strip(),
+        "jenkins_auth_method": method,
         "active": len(profiles) == 0,  # first profile auto-activates
     }
     profiles.append(profile)
@@ -107,9 +117,10 @@ def activate_profile(profile_id: str) -> bool:
     # Write to .env so get_settings() picks up the new credentials
     from ui.setup_handler import save_credentials
     save_credentials({
-        "jenkins_url":   target["jenkins_url"],
-        "jenkins_user":  target["jenkins_user"],
-        "jenkins_token": target["jenkins_token"],
+        "jenkins_url":         target["jenkins_url"],
+        "jenkins_user":        target["jenkins_user"],
+        "jenkins_token":       target["jenkins_token"],
+        "jenkins_auth_method": target.get("jenkins_auth_method", "token"),
     })
 
     # Clear SSE bus history so the new profile starts with a clean feed

@@ -157,6 +157,45 @@ def test_save_credentials_raises_on_invalid_payload():
         save_credentials({"jenkins_url": "", "jenkins_user": "admin", "jenkins_token": "tok"})
 
 
+def test_save_credentials_persists_auth_method_token(tmp_path):
+    f = _save(tmp_path, {
+        "jenkins_url": "http://localhost:8080",
+        "jenkins_user": "admin",
+        "jenkins_token": "tok",
+        "jenkins_auth_method": "token",
+    })
+    assert "JENKINS_AUTH_METHOD=token" in f.read_text()
+
+
+def test_save_credentials_persists_auth_method_password(tmp_path):
+    f = _save(tmp_path, {
+        "jenkins_url": "http://localhost:8080",
+        "jenkins_user": "admin",
+        "jenkins_token": "admin123",
+        "jenkins_auth_method": "password",
+    })
+    assert "JENKINS_AUTH_METHOD=password" in f.read_text()
+
+
+def test_save_credentials_defaults_auth_method_to_token(tmp_path):
+    f = _save(tmp_path, {
+        "jenkins_url": "http://localhost:8080",
+        "jenkins_user": "admin",
+        "jenkins_token": "tok",
+    })
+    assert "JENKINS_AUTH_METHOD=token" in f.read_text()
+
+
+def test_save_credentials_rejects_invalid_auth_method_falls_back_to_token(tmp_path):
+    f = _save(tmp_path, {
+        "jenkins_url": "http://localhost:8080",
+        "jenkins_user": "admin",
+        "jenkins_token": "tok",
+        "jenkins_auth_method": "ldap",
+    })
+    assert "JENKINS_AUTH_METHOD=token" in f.read_text()
+
+
 def test_save_credentials_strips_whitespace_from_user_and_token(tmp_path):
     # URL must be valid (no leading space), but user/token trailing spaces are stripped
     f = _save(tmp_path, {
