@@ -97,6 +97,9 @@ export function SettingsPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
           ))}
         </div>
 
+        {/* Jenkins auto-setup (notification webhook + plugins) */}
+        <JenkinsAutoSetup />
+
         {/* API Key Manager (multi-key, multi-provider) */}
         <ApiKeysManager />
 
@@ -302,6 +305,127 @@ interface ApiKey {
 const SUPPORTED_KEY_PROVIDERS = [
   { id: 'anthropic', label: 'Anthropic' },
 ] as const
+
+interface AutoSetupReport {
+  ok: boolean
+  webhook_url: string
+  plugins_installed: string[]
+  plugins_already_present: string[]
+  jobs_configured: string[]
+  jobs_already_configured: string[]
+  errors: string[]
+  restart_required: boolean
+}
+
+function JenkinsAutoSetup() {
+  const [busy, setBusy] = useState(false)
+  const [publicUrl, setPublicUrl] = useState('')
+  const [report, setReport] = useState<AutoSetupReport | null>(null)
+  const [error, setError] = useState('')
+
+  async function run() {
+    setBusy(true); setError(''); setReport(null)
+    try {
+      const r = await fetch('/api/jenkins/auto-setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ public_base_url: publicUrl.trim() }),
+      })
+      const data = await r.json()
+      if (!r.ok) {
+        setError(data.detail || `HTTP ${r.status}`)
+        return
+      }
+      setReport(data)
+    } catch (e: any) {
+      setError(e?.message ?? 'Network error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl border border-accent-border/50 bg-white overflow-hidden shadow-card">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-accent-border/30 bg-overlay/30">
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white border border-accent-border/50">
+          <Webhook className="h-4 w-4 text-accent" strokeWidth={1.75} />
+        </div>
+        <div>
+          <p className="text-[14px] font-bold text-text-primary leading-none">Jenkins Webhook Setup</p>
+          <p className="text-[11px] font-mono text-text-muted mt-1 leading-none">Auto-install plugins + configure all jobs to push failures here</p>
+        </div>
+      </div>
+      <div className="px-5 py-5 space-y-4">
+        <div>
+          <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Public webhook URL (optional)</label>
+          <input
+            type="text"
+            placeholder={`Auto-detected if blank — e.g. http://your-app.example.com:8000`}
+            value={publicUrl}
+            onChange={e => setPublicUrl(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+          />
+          <p className="text-[10px] font-mono text-text-dim mt-1">URL that Jenkins should POST failure events to. Leave blank to derive from your browser URL.</p>
+        </div>
+
+        <Button
+          size="sm"
+          onClick={run}
+          disabled={busy}
+          className="gap-2 bg-accent hover:bg-accent-hi text-white text-[12px] h-9 px-4 font-mono rounded-lg"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Webhook className="h-3.5 w-3.5" strokeWidth={2} />}
+          {busy ? 'Configuring Jenkins…' : 'Configure Jenkins for Webhooks'}
+        </Button>
+
+        {error && (
+          <div className="rounded-lg border border-error/30 bg-error-dim px-3 py-2 text-[12px] font-mono text-error">{error}</div>
+        )}
+
+        {report && (
+          <div className={cn(
+            'rounded-lg border px-3 py-3 space-y-2 text-[12px] font-mono',
+            report.ok ? 'border-success/30 bg-success-dim' : 'border-error/30 bg-error-dim',
+          )}>
+            <p className="flex items-center gap-2 font-semibold">
+              {report.ok
+                ? <CheckCircle2 className="h-4 w-4 text-success" strokeWidth={2} />
+                : <AlertTriangle className="h-4 w-4 text-error" strokeWidth={2} />}
+              {report.ok ? 'Setup complete' : 'Setup completed with errors'}
+            </p>
+            <p className="text-[11px] text-text-muted">Webhook URL: <code className="text-accent">{report.webhook_url}</code></p>
+            {report.plugins_installed.length > 0 && (
+              <p className="text-[11px]">Installed plugins: <span className="text-accent">{report.plugins_installed.join(', ')}</span></p>
+            )}
+            {report.plugins_already_present.length > 0 && (
+              <p className="text-[11px] text-text-dim">Already installed: {report.plugins_already_present.join(', ')}</p>
+            )}
+            {report.jobs_configured.length > 0 && (
+              <p className="text-[11px]">Configured jobs ({report.jobs_configured.length}): <span className="text-accent">{report.jobs_configured.join(', ')}</span></p>
+            )}
+            {report.jobs_already_configured.length > 0 && (
+              <p className="text-[11px] text-text-dim">Already configured: {report.jobs_already_configured.join(', ')}</p>
+            )}
+            {report.errors.length > 0 && (
+              <div className="text-[11px] text-error">
+                <p className="font-semibold mb-1">Errors:</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  {report.errors.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              </div>
+            )}
+            {report.restart_required && (
+              <p className="text-[11px] text-warning flex items-start gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" strokeWidth={2} />
+                <span>Plugins were installed — Jenkins must be restarted before notifications start firing. Manage Jenkins → Restart, or run <code>safeRestart</code>.</span>
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function ApiKeysManager() {
   const [keys, setKeys] = useState<ApiKey[]>([])

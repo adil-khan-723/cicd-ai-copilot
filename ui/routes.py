@@ -20,7 +20,7 @@ from typing import Optional
 import jenkins
 from config import get_settings
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -501,6 +501,51 @@ async def activate_profile(profile_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="Profile not found")
     return {"ok": True}
+
+
+# ── Jenkins auto-setup (notification webhook + plugins) ────────────────────
+
+class JenkinsAutoSetupPayload(BaseModel):
+    # Optional: override the webhook URL Jenkins should call.
+    # When empty, derives from request scheme + Host header + webhook_port.
+    public_base_url: str = ""
+
+
+@router.post("/api/jenkins/auto-setup")
+async def jenkins_auto_setup(payload: JenkinsAutoSetupPayload, request: Request):
+    """
+    One-click: install required plugins + configure all Jenkins jobs to POST
+    failure events to our webhook. Idempotent — safe to re-run.
+    """
+    from ui.jenkins_setup import configure_jenkins_for_webhooks
+    s = get_settings()
+    if not s.jenkins_url or not s.jenkins_token:
+        raise HTTPException(status_code=422, detail="Jenkins not configured. Save credentials first.")
+
+    base = (payload.public_base_url or s.public_base_url or "").strip()
+    if not base:
+        # Derive from request — works when user opens UI from same host they want webhook on
+        host_header = request.headers.get("host", "").split(":")[0] or "localhost"
+        base = f"{request.url.scheme}://{host_header}:{s.webhook_port}"
+    base = base.rstrip("/")
+    webhook_url = f"{base}/webhook/jenkins-notification"
+
+    loop = asyncio.get_event_loop()
+    report = await loop.run_in_executor(
+        None,
+        configure_jenkins_for_webhooks,
+        s.jenkins_url, s.jenkins_user or "", s.jenkins_token, webhook_url,
+    )
+    return {
+        "ok": report.ok,
+        "webhook_url": webhook_url,
+        "plugins_installed": report.plugins_installed,
+        "plugins_already_present": report.plugins_already_present,
+        "jobs_configured": report.jobs_configured,
+        "jobs_already_configured": report.jobs_already_configured,
+        "errors": report.errors,
+        "restart_required": report.restart_required,
+    }
 
 
 @router.delete("/api/profiles/{profile_id}")
