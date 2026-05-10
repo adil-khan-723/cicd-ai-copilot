@@ -71,6 +71,37 @@ def test_add_profile_trailing_slash_stripped():
     assert profiles[0]["jenkins_url"] == "http://j:8080"
 
 
+def test_add_profile_idempotent_on_same_url_and_user():
+    """Re-running setup wizard against same Jenkins must reuse the profile id
+    so browser-side chat history (keyed on profile.id) survives."""
+    store = _store()
+    first = store.add_profile("dev", "http://j:8080", "admin", "tok1")
+    second = store.add_profile("dev", "http://j:8080", "admin", "tok2-rotated")
+    assert first["id"] == second["id"]
+    profiles = store.list_profiles()
+    assert len(profiles) == 1
+    # Token rotated in place
+    active = store.get_active_profile()
+    assert active["jenkins_token"] == "tok2-rotated"
+
+
+def test_add_profile_different_user_creates_new_id():
+    """Different user on same URL = different profile (e.g. bot vs human accounts)."""
+    store = _store()
+    first = store.add_profile("admin", "http://j:8080", "admin", "tok1")
+    second = store.add_profile("bot", "http://j:8080", "ci-bot", "tok2")
+    assert first["id"] != second["id"]
+    assert len(store.list_profiles()) == 2
+
+
+def test_add_profile_trailing_slash_matches_for_idempotence():
+    """URL with/without trailing slash should match the same profile."""
+    store = _store()
+    first = store.add_profile("dev", "http://j:8080", "admin", "tok1")
+    second = store.add_profile("dev", "http://j:8080/", "admin", "tok2")
+    assert first["id"] == second["id"]
+
+
 def test_profiles_persisted_to_disk(tmp_path):
     _store().add_profile("dev", "http://j:8080", "admin", "tok")
     path = tmp_path / "profiles.json"

@@ -79,22 +79,44 @@ def add_profile(
     jenkins_auth_method: str = "token",
 ) -> dict:
     profiles = _load()
-    profile_id = str(uuid.uuid4())
     method = (jenkins_auth_method or "token").strip().lower()
     if method not in ("token", "password"):
         method = "token"
+
+    norm_url = jenkins_url.strip().rstrip("/")
+    norm_user = jenkins_user.strip()
+
+    # Idempotent: if a profile with the same Jenkins URL+user already exists,
+    # update its credentials in place and return the existing ID. This keeps
+    # browser-side chat history (keyed on profile.id) intact when the user
+    # re-runs the setup wizard against the same Jenkins instance.
+    existing = next(
+        (p for p in profiles
+         if p.get("jenkins_url", "").rstrip("/") == norm_url
+         and p.get("jenkins_user", "") == norm_user),
+        None,
+    )
+    if existing:
+        existing["alias"] = alias.strip() or existing.get("alias", "")
+        existing["jenkins_token"] = jenkins_token.strip()
+        existing["jenkins_auth_method"] = method
+        _save(profiles)
+        _profile_dir(existing["id"])
+        logger.info("Profile updated in place: %s (%s) — id %s reused", alias, jenkins_url, existing["id"])
+        return _mask(existing)
+
+    profile_id = str(uuid.uuid4())
     profile = {
         "id": profile_id,
         "alias": alias.strip(),
-        "jenkins_url": jenkins_url.strip().rstrip("/"),
-        "jenkins_user": jenkins_user.strip(),
+        "jenkins_url": norm_url,
+        "jenkins_user": norm_user,
         "jenkins_token": jenkins_token.strip(),
         "jenkins_auth_method": method,
         "active": len(profiles) == 0,  # first profile auto-activates
     }
     profiles.append(profile)
     _save(profiles)
-    # Create the profile-specific data directory immediately
     _profile_dir(profile_id)
     logger.info("Profile added: %s (%s) — data dir created", alias, jenkins_url)
     return _mask(profile)
