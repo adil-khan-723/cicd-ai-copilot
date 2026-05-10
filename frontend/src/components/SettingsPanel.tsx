@@ -279,6 +279,19 @@ interface LlmSettings {
   generation_model: string
 }
 
+// Locked dropdown options — typo-proof. Add new models here when Anthropic ships them.
+const ANTHROPIC_MODELS: { id: string; label: string }[] = [
+  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (fast/cheap)' },
+  { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet 4.6 (balanced)' },
+  { id: 'claude-opus-4-7',           label: 'Claude Opus 4.7 (most capable)' },
+]
+
+function modelOptions(currentValue: string): { id: string; label: string }[] {
+  if (!currentValue || ANTHROPIC_MODELS.some(m => m.id === currentValue)) return ANTHROPIC_MODELS
+  // Surface legacy/unknown saved value so user sees it explicitly instead of silent fallback
+  return [...ANTHROPIC_MODELS, { id: currentValue, label: `${currentValue} (legacy)` }]
+}
+
 function LlmConfig() {
   const [loaded, setLoaded] = useState(false)
   const [provider, setProvider] = useState<'anthropic' | 'ollama'>('ollama')
@@ -340,12 +353,17 @@ function LlmConfig() {
     const body: Record<string, string> = { provider }
     if (provider === 'anthropic') {
       if (keyInput.trim()) body.anthropic_api_key = keyInput.trim()
-      if (analysisModel.trim()) body.anthropic_analysis_model = analysisModel.trim()
-      if (generationModel.trim()) body.anthropic_generation_model = generationModel.trim()
+      // Always send dropdown selection (resolved value, falls back to default if blank)
+      body.anthropic_analysis_model = analysisModel.trim() || ANTHROPIC_MODELS[0].id
+      body.anthropic_generation_model = generationModel.trim() || ANTHROPIC_MODELS[1].id
     } else {
       if (ollamaUrl.trim()) body.ollama_base_url = ollamaUrl.trim()
-      if (analysisModel.trim()) body.analysis_model = analysisModel.trim()
-      if (generationModel.trim()) body.generation_model = generationModel.trim()
+      // Single Ollama model handles both analysis + generation
+      const ollamaModel = analysisModel.trim()
+      if (ollamaModel) {
+        body.analysis_model = ollamaModel
+        body.generation_model = ollamaModel
+      }
     }
     try {
       const r = await fetch('/api/llm-settings', {
@@ -442,23 +460,29 @@ function LlmConfig() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Analysis Model</label>
-                    <input
-                      type="text"
-                      placeholder="claude-haiku-4-5-20251001"
-                      value={analysisModel}
+                    <select
+                      value={analysisModel || ANTHROPIC_MODELS[0].id}
                       onChange={e => setAnalysisModel(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
-                    />
+                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
+                    >
+                      {modelOptions(analysisModel).map(m => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] font-mono text-text-dim mt-1">Fast + cheap. Used for failure root-cause analysis.</p>
                   </div>
                   <div>
                     <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Generation Model</label>
-                    <input
-                      type="text"
-                      placeholder="claude-sonnet-4-6"
-                      value={generationModel}
+                    <select
+                      value={generationModel || ANTHROPIC_MODELS[1].id}
                       onChange={e => setGenerationModel(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
-                    />
+                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent cursor-pointer"
+                    >
+                      {modelOptions(generationModel).map(m => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] font-mono text-text-dim mt-1">Higher quality. Used for pipeline generation.</p>
                   </div>
                 </div>
               </>
@@ -477,27 +501,16 @@ function LlmConfig() {
                     className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Analysis Model</label>
-                    <input
-                      type="text"
-                      placeholder="llama3.1:8b"
-                      value={analysisModel}
-                      onChange={e => setAnalysisModel(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Generation Model</label>
-                    <input
-                      type="text"
-                      placeholder="qwen2.5-coder:14b"
-                      value={generationModel}
-                      onChange={e => setGenerationModel(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Model</label>
+                  <input
+                    type="text"
+                    placeholder="llama3.1:8b"
+                    value={analysisModel}
+                    onChange={e => setAnalysisModel(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+                  />
+                  <p className="text-[10px] font-mono text-text-dim mt-1">Same model handles both analysis + generation.</p>
                 </div>
               </>
             )}
