@@ -104,6 +104,7 @@ class SetupPayload(BaseModel):
     jenkins_url: str
     jenkins_user: str
     jenkins_token: str
+    jenkins_auth_method: str = "token"  # 'token' | 'password'
 
 
 @router.post("/api/setup")
@@ -275,6 +276,7 @@ async def settings():
     return {
         "jenkins_url": s.jenkins_url,
         "jenkins_user": s.jenkins_user,
+        "jenkins_auth_method": getattr(s, "jenkins_auth_method", "token"),
         "llm_provider": s.llm_provider,
         "llm_fallback_provider": getattr(s, "llm_fallback_provider", ""),
         "configured": bool(s.jenkins_url and s.jenkins_token),
@@ -381,6 +383,7 @@ class ProfilePayload(BaseModel):
     jenkins_url: str
     jenkins_user: str
     jenkins_token: str
+    jenkins_auth_method: str = "token"  # 'token' | 'password'
 
 
 @router.get("/api/profiles")
@@ -399,6 +402,7 @@ async def create_profile(payload: ProfilePayload):
             jenkins_url=payload.jenkins_url,
             jenkins_user=payload.jenkins_user,
             jenkins_token=payload.jenkins_token,
+            jenkins_auth_method=payload.jenkins_auth_method,
         )
         return {"ok": True, "profile": profile}
     except SetupError as e:

@@ -134,6 +134,7 @@ export interface SetupFormData {
   jenkins_url: string
   jenkins_user: string
   jenkins_token: string
+  jenkins_auth_method: 'token' | 'password'
 }
 
 export type ActivePanel = 'pipeline' | 'chat' | 'jobs' | 'settings'

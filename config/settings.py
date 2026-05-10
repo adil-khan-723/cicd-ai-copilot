@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     # Jenkins
     jenkins_url: str = Field(default="http://localhost:8080")
     jenkins_user: str = Field(default="admin")
-    jenkins_token: str = Field(default="")
+    jenkins_token: str = Field(default="")  # secret: API token OR password
+    # 'token' (recommended) | 'password' — informational label only.
+    # Wire-side both flow as HTTP basic auth, Jenkins accepts either.
+    jenkins_auth_method: str = Field(default="token")
 
     # Webhook
     webhook_port: int = Field(default=8000)
