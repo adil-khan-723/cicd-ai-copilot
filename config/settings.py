@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     webhook_port: int = Field(default=8000)
     webhook_secret: str = Field(default="")
     webhook_host: str = Field(default="0.0.0.0")
+    # Public URL Jenkins should call back to (e.g. http://1.2.3.4:8000).
+    # Only needed when Jenkins is on a different host than this app.
+    # Falls back to scheme://request_host:webhook_port when empty.
+    public_base_url: str = Field(default="")
 
     # Cache
     cache_ttl: int = Field(default=3600)
