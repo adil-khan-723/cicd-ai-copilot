@@ -259,6 +259,15 @@ async def chat(payload: ChatPayload):
 
 # ── Settings (read active config for UI bootstrap) ─────────────────────────
 
+def _mask_key(key: str) -> str:
+    """Return 'sk-ant-•••...•••abcd' style masked preview. Never reveals full key."""
+    if not key:
+        return ""
+    if len(key) <= 12:
+        return "•" * len(key)
+    return f"{key[:7]}•••...•••{key[-4:]}"
+
+
 @router.get("/api/settings")
 async def settings():
     from config import get_settings
@@ -267,9 +276,38 @@ async def settings():
         "jenkins_url": s.jenkins_url,
         "jenkins_user": s.jenkins_user,
         "llm_provider": s.llm_provider,
+        "llm_fallback_provider": getattr(s, "llm_fallback_provider", ""),
         "configured": bool(s.jenkins_url and s.jenkins_token),
         "webhook_secret_set": bool(s.webhook_secret),  # boolean only — never the value
+        # LLM block — key never returned, only masked preview + bool
+        "anthropic_configured": bool(s.anthropic_api_key),
+        "anthropic_key_preview": _mask_key(s.anthropic_api_key),
+        "anthropic_analysis_model": getattr(s, "anthropic_analysis_model", ""),
+        "anthropic_generation_model": getattr(s, "anthropic_generation_model", ""),
+        "ollama_base_url": getattr(s, "ollama_base_url", ""),
+        "analysis_model": getattr(s, "analysis_model", ""),
+        "generation_model": getattr(s, "generation_model", ""),
     }
+
+
+class LLMConfigPayload(BaseModel):
+    provider: str
+    anthropic_api_key: str = ""
+    anthropic_analysis_model: str = ""
+    anthropic_generation_model: str = ""
+    ollama_base_url: str = ""
+    analysis_model: str = ""
+    generation_model: str = ""
+
+
+@router.post("/api/llm-settings")
+async def save_llm_settings(payload: LLMConfigPayload):
+    from ui.setup_handler import save_llm_config, SetupError
+    try:
+        save_llm_config(payload.model_dump())
+    except SetupError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
 
 
 # ── Jenkins profiles ───────────────────────────────────────────────────────
@@ -337,6 +375,10 @@ async def rename_profile(profile_id: str, body: dict):
 
 class TestConnectionPayload(BaseModel):
     provider: str  # "jenkins" | "anthropic" | "ollama"
+    # Optional: test an unsaved key (lets user click Test before Save).
+    # Never stored — used only for the test call.
+    api_key: str = ""
+    base_url: str = ""
 
 
 @router.post("/api/secrets/test-connection")
@@ -375,9 +417,25 @@ async def test_connection(payload: TestConnectionPayload):
     if provider == "anthropic":
         def _check():
             try:
-                from providers.anthropic_provider import AnthropicProvider
-                available = AnthropicProvider().is_available()
-                return available, "Anthropic reachable." if available else "Anthropic key invalid or unreachable."
+                # If user supplied an unsaved key in payload (Test before Save), use it.
+                # Else fall back to whatever's in settings.
+                test_key = payload.api_key.strip() or s.anthropic_api_key
+                if not test_key:
+                    return False, "No API key supplied or saved."
+                if not test_key.startswith("sk-"):
+                    return False, "Key must start with 'sk-'."
+                import anthropic as _anthropic
+                client = _anthropic.Anthropic(api_key=test_key)
+                # Cheapest reachability check: list models endpoint
+                try:
+                    client.models.list(limit=1)
+                    return True, "Anthropic reachable — key valid."
+                except _anthropic.AuthenticationError:
+                    return False, "Authentication failed — key rejected."
+                except Exception as e:
+                    return False, scrub(f"Request failed: {e}")
+            except ImportError:
+                return False, "anthropic SDK not installed."
             except Exception as e:
                 return False, scrub(str(e))
 

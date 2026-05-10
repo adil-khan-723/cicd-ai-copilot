@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings, Server, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle, Shield } from 'lucide-react'
+import { Settings, Server, Brain, Webhook, ExternalLink, ClipboardList, RefreshCw, CheckCircle2, AlertTriangle, Circle, Shield, Loader2, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -19,16 +19,6 @@ const SECTIONS: SettingSection[] = [
       { label: 'Endpoint', value: 'Configured in .env' },
       { label: 'Webhook', value: 'POST /webhook/jenkins-notification' },
       { label: 'Setup', value: './start.sh --setup-jenkins' },
-    ],
-  },
-  {
-    icon: Brain,
-    title: 'LLM Provider',
-    desc: 'Analysis and generation model',
-    items: [
-      { label: 'Analysis', value: 'claude-haiku / llama3.1:8b' },
-      { label: 'Generation', value: 'claude-sonnet / qwen2.5-coder' },
-      { label: 'Switch', value: 'LLM_PROVIDER in .env' },
     ],
   },
   {
@@ -105,6 +95,9 @@ export function SettingsPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
             </div>
           ))}
         </div>
+
+        {/* LLM Configuration (provider + key + Test/Save) */}
+        <LlmConfig />
 
         {/* LLM Status */}
         <LlmStatus />
@@ -270,6 +263,289 @@ function SecurityStatus() {
           sublabel="Every credential access recorded (names only)"
           status="ok"
         />
+      </div>
+    </div>
+  )
+}
+
+interface LlmSettings {
+  llm_provider: string
+  anthropic_configured: boolean
+  anthropic_key_preview: string
+  anthropic_analysis_model: string
+  anthropic_generation_model: string
+  ollama_base_url: string
+  analysis_model: string
+  generation_model: string
+}
+
+function LlmConfig() {
+  const [loaded, setLoaded] = useState(false)
+  const [provider, setProvider] = useState<'anthropic' | 'ollama'>('ollama')
+  const [savedPreview, setSavedPreview] = useState('')
+  const [keyInput, setKeyInput] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [analysisModel, setAnalysisModel] = useState('')
+  const [generationModel, setGenerationModel] = useState('')
+  const [ollamaUrl, setOllamaUrl] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null)
+  const [savedToast, setSavedToast] = useState(false)
+
+  function loadSettings() {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then((d: LlmSettings) => {
+        setProvider((d.llm_provider as 'anthropic' | 'ollama') || 'ollama')
+        setSavedPreview(d.anthropic_key_preview || '')
+        if (d.llm_provider === 'anthropic') {
+          setAnalysisModel(d.anthropic_analysis_model || '')
+          setGenerationModel(d.anthropic_generation_model || '')
+        } else {
+          setOllamaUrl(d.ollama_base_url || '')
+          setAnalysisModel(d.analysis_model || '')
+          setGenerationModel(d.generation_model || '')
+        }
+        setLoaded(true)
+      })
+      .catch(() => setLoaded(true))
+  }
+
+  useEffect(() => { loadSettings() }, [])
+
+  async function testConnection() {
+    setTesting(true)
+    setTestResult(null)
+    const body: Record<string, string> = { provider }
+    if (provider === 'anthropic' && keyInput.trim()) body.api_key = keyInput.trim()
+    if (provider === 'ollama' && ollamaUrl.trim()) body.base_url = ollamaUrl.trim()
+    try {
+      const r = await fetch('/api/secrets/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const d = await r.json()
+      setTestResult({ ok: !!d.ok, detail: d.detail ?? '' })
+    } catch (e: any) {
+      setTestResult({ ok: false, detail: e?.message ?? 'Network error' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  async function save() {
+    setSaving(true)
+    const body: Record<string, string> = { provider }
+    if (provider === 'anthropic') {
+      if (keyInput.trim()) body.anthropic_api_key = keyInput.trim()
+      if (analysisModel.trim()) body.anthropic_analysis_model = analysisModel.trim()
+      if (generationModel.trim()) body.anthropic_generation_model = generationModel.trim()
+    } else {
+      if (ollamaUrl.trim()) body.ollama_base_url = ollamaUrl.trim()
+      if (analysisModel.trim()) body.analysis_model = analysisModel.trim()
+      if (generationModel.trim()) body.generation_model = generationModel.trim()
+    }
+    try {
+      const r = await fetch('/api/llm-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (r.ok) {
+        setKeyInput('')  // clear input — server now has it
+        setSavedToast(true)
+        setTimeout(() => setSavedToast(false), 2500)
+        loadSettings()  // refresh masked preview + provider
+      } else {
+        const d = await r.json().catch(() => ({}))
+        setTestResult({ ok: false, detail: d.detail ?? `HTTP ${r.status}` })
+      }
+    } catch (e: any) {
+      setTestResult({ ok: false, detail: e?.message ?? 'Network error' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl border border-accent-border/50 bg-white overflow-hidden shadow-card">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-accent-border/30 bg-overlay/30">
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white border border-accent-border/50">
+          <Brain className="h-4 w-4 text-accent" strokeWidth={1.75} />
+        </div>
+        <div>
+          <p className="text-[14px] font-bold text-text-primary leading-none">LLM Configuration</p>
+          <p className="text-[11px] font-mono text-text-muted mt-1 leading-none">Provider + API key (saved to .env, hot-reloaded)</p>
+        </div>
+      </div>
+
+      <div className="px-5 py-5 space-y-5">
+        {!loaded ? (
+          <div className="text-[12px] font-mono text-text-dim">Loading…</div>
+        ) : (
+          <>
+            {/* Provider radio */}
+            <div>
+              <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-2">Provider</label>
+              <div className="flex gap-2">
+                {(['ollama', 'anthropic'] as const).map(p => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => { setProvider(p); setTestResult(null) }}
+                    className={cn(
+                      'flex-1 py-2 rounded-lg text-[12px] font-semibold border transition-all duration-150 cursor-pointer',
+                      provider === p
+                        ? 'bg-accent border-accent text-white'
+                        : 'bg-white border-accent-border/40 text-text-base hover:bg-overlay/30'
+                    )}
+                  >
+                    {p === 'anthropic' ? 'Anthropic (cloud)' : 'Ollama (local)'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Anthropic-specific fields */}
+            {provider === 'anthropic' && (
+              <>
+                <div>
+                  <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">API Key</label>
+                  {savedPreview && (
+                    <p className="text-[11px] font-mono text-text-muted mb-1.5">
+                      Saved: <code className="text-accent">{savedPreview}</code>
+                    </p>
+                  )}
+                  <div className="relative">
+                    <input
+                      type={showKey ? 'text' : 'password'}
+                      autoComplete="off"
+                      placeholder={savedPreview ? 'Leave blank to keep saved key' : 'sk-ant-...'}
+                      value={keyInput}
+                      onChange={e => { setKeyInput(e.target.value); setTestResult(null) }}
+                      className="w-full px-3 py-2 pr-10 rounded-lg border border-accent-border/40 text-[13px] font-mono bg-white focus:outline-none focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKey(s => !s)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-text-base"
+                      aria-label={showKey ? 'Hide key' : 'Show key'}
+                    >
+                      {showKey ? <EyeOff className="h-3.5 w-3.5" strokeWidth={2} /> : <Eye className="h-3.5 w-3.5" strokeWidth={2} />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] font-mono text-text-dim mt-1">Stored in .env. Never logged or returned by the API.</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Analysis Model</label>
+                    <input
+                      type="text"
+                      placeholder="claude-haiku-4-5-20251001"
+                      value={analysisModel}
+                      onChange={e => setAnalysisModel(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Generation Model</label>
+                    <input
+                      type="text"
+                      placeholder="claude-sonnet-4-6"
+                      value={generationModel}
+                      onChange={e => setGenerationModel(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Ollama-specific fields */}
+            {provider === 'ollama' && (
+              <>
+                <div>
+                  <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Ollama URL</label>
+                  <input
+                    type="text"
+                    placeholder="http://localhost:11434"
+                    value={ollamaUrl}
+                    onChange={e => setOllamaUrl(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Analysis Model</label>
+                    <input
+                      type="text"
+                      placeholder="llama3.1:8b"
+                      value={analysisModel}
+                      onChange={e => setAnalysisModel(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono font-semibold text-text-dim uppercase tracking-[0.1em] mb-1">Generation Model</label>
+                    <input
+                      type="text"
+                      placeholder="qwen2.5-coder:14b"
+                      value={generationModel}
+                      onChange={e => setGenerationModel(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-accent-border/40 text-[12px] font-mono bg-white focus:outline-none focus:border-accent"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Test result */}
+            {testResult && (
+              <div className={cn(
+                'flex items-start gap-2 rounded-lg border px-3 py-2 text-[12px] font-mono',
+                testResult.ok
+                  ? 'border-success-border bg-success-dim text-success'
+                  : 'border-error-border bg-error-dim text-error'
+              )}>
+                {testResult.ok
+                  ? <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" strokeWidth={2} />
+                  : <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" strokeWidth={2} />}
+                <span className="leading-relaxed">{testResult.detail}</span>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={testConnection}
+                disabled={testing || saving}
+                className="gap-2 border border-accent-border/50 text-accent hover:bg-accent/5 text-[12px] h-9 px-4 font-mono rounded-lg"
+              >
+                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />}
+                {testing ? 'Testing…' : 'Test Connection'}
+              </Button>
+              <Button
+                size="sm"
+                onClick={save}
+                disabled={saving || testing}
+                className="gap-2 bg-accent hover:bg-accent-hi text-white font-semibold border-0 text-[12px] h-9 px-4 font-mono rounded-lg shadow-soft"
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Settings className="h-3.5 w-3.5" strokeWidth={2} />}
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+              {savedToast && (
+                <span className="text-[12px] font-mono text-success flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} /> Saved
+                </span>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

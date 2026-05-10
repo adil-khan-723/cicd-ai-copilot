@@ -53,11 +53,56 @@ def save_credentials(payload: dict) -> None:
     }
 
     _write_env(mapping)
+    _clear_settings_cache()
+    logger.info("Setup credentials saved for jenkins=%s", payload["jenkins_url"])
 
+
+def save_llm_config(payload: dict) -> None:
+    """
+    Persist LLM provider + model + API key to .env. Empty api_key skipped
+    so user can update provider/model without retyping the key.
+    Never logs the key value.
+    """
+    provider = str(payload.get("provider", "")).strip().lower()
+    if provider not in ("anthropic", "ollama"):
+        raise SetupError("provider must be 'anthropic' or 'ollama'.")
+
+    mapping: dict[str, str] = {"LLM_PROVIDER": provider}
+
+    if provider == "anthropic":
+        api_key = str(payload.get("anthropic_api_key", "")).strip()
+        # Empty key => skip (preserve existing). Non-empty key => write.
+        if api_key:
+            if not api_key.startswith("sk-"):
+                raise SetupError("anthropic_api_key must start with 'sk-'.")
+            mapping["ANTHROPIC_API_KEY"] = api_key
+        analysis_model = str(payload.get("anthropic_analysis_model", "")).strip()
+        generation_model = str(payload.get("anthropic_generation_model", "")).strip()
+        if analysis_model:
+            mapping["ANTHROPIC_ANALYSIS_MODEL"] = analysis_model
+        if generation_model:
+            mapping["ANTHROPIC_GENERATION_MODEL"] = generation_model
+
+    elif provider == "ollama":
+        base_url = str(payload.get("ollama_base_url", "")).strip()
+        if base_url:
+            mapping["OLLAMA_BASE_URL"] = base_url
+        analysis_model = str(payload.get("analysis_model", "")).strip()
+        generation_model = str(payload.get("generation_model", "")).strip()
+        if analysis_model:
+            mapping["ANALYSIS_MODEL"] = analysis_model
+        if generation_model:
+            mapping["GENERATION_MODEL"] = generation_model
+
+    _write_env(mapping)
+    _clear_settings_cache()
+    logger.info("LLM config saved (provider=%s, key_updated=%s)",
+                provider, "yes" if "ANTHROPIC_API_KEY" in mapping else "no")
+
+
+def _clear_settings_cache() -> None:
     from config import settings as _cfg
     _cfg._settings = None  # reset manual singleton so next call re-reads .env
-
-    logger.info("Setup credentials saved for jenkins=%s", payload["jenkins_url"])
 
 
 def _write_env(updates: dict[str, str]) -> None:

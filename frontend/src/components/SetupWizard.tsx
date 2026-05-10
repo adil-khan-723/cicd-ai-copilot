@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Info, Loader2, CheckCircle2, Server, XCircle } from 'lucide-react'
+import { Zap, Info, Loader2, CheckCircle2, Server, XCircle, Brain } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { SetupFormData } from '@/types'
@@ -24,6 +24,31 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
   const [saved,             setSaved]             = useState(false)
   const [jenkinsTestState,  setJenkinsTestState]  = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
   const [jenkinsTestDetail, setJenkinsTestDetail] = useState('')
+  // LLM step (optional in wizard; full UI lives in Settings)
+  const [llmProvider, setLlmProvider] = useState<'ollama' | 'anthropic'>('ollama')
+  const [llmKey, setLlmKey] = useState('')
+  const [llmTestState, setLlmTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [llmTestDetail, setLlmTestDetail] = useState('')
+
+  async function testLlm() {
+    setLlmTestState('testing')
+    setLlmTestDetail('')
+    const body: Record<string, string> = { provider: llmProvider }
+    if (llmProvider === 'anthropic' && llmKey.trim()) body.api_key = llmKey.trim()
+    try {
+      const r = await fetch('/api/secrets/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const d = await r.json()
+      setLlmTestState(d?.ok ? 'ok' : 'fail')
+      if (!d?.ok && d?.detail) setLlmTestDetail(d.detail)
+    } catch {
+      setLlmTestState('fail')
+      setLlmTestDetail('Network error')
+    }
+  }
 
   async function testJenkins() {
     if (!form.jenkins_url.trim()) return
@@ -67,6 +92,21 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
       // activate the new profile
       const { profile } = await res.json()
       await fetch(`/api/profiles/${profile.id}/activate`, { method: 'POST' })
+
+      // If user provided LLM config, persist it (skipped silently when blank)
+      const wantSaveLlm = llmProvider === 'anthropic' ? llmKey.trim().length > 0 : true
+      if (wantSaveLlm) {
+        const llmBody: Record<string, string> = { provider: llmProvider }
+        if (llmProvider === 'anthropic' && llmKey.trim()) llmBody.anthropic_api_key = llmKey.trim()
+        try {
+          await fetch('/api/llm-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(llmBody),
+          })
+        } catch { /* non-fatal — user can fix in Settings later */ }
+      }
+
       setSaved(true)
       setTimeout(() => { onSaved(''); setSaved(false) }, 700)
     } catch {
@@ -174,6 +214,59 @@ export function SetupWizard({ visible, initialData, onClose, onSaved }: SetupWiz
                       </em>.
                     </p>
                   </div>
+                </div>
+
+                {/* LLM (optional in wizard, full config in Settings) */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Brain className="h-3.5 w-3.5 text-text-dim" />
+                    <span className="text-[10px] font-semibold text-text-muted uppercase tracking-widest">LLM (optional)</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {(['ollama', 'anthropic'] as const).map(p => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => { setLlmProvider(p); setLlmTestState('idle') }}
+                        className={`flex-1 py-1.5 rounded-md text-[11px] font-semibold border transition-all duration-150 cursor-pointer ${
+                          llmProvider === p
+                            ? 'bg-accent border-accent text-white'
+                            : 'bg-white border-accent-border/40 text-text-base hover:bg-overlay/30'
+                        }`}
+                      >
+                        {p === 'anthropic' ? 'Anthropic (cloud)' : 'Ollama (local)'}
+                      </button>
+                    ))}
+                  </div>
+                  {llmProvider === 'anthropic' && (
+                    <div>
+                      <Input
+                        label="Anthropic API Key"
+                        type="password"
+                        placeholder="sk-ant-..."
+                        value={llmKey}
+                        onChange={e => { setLlmKey(e.target.value); setLlmTestState('idle') }}
+                        onBlur={() => llmKey.trim() && testLlm()}
+                      />
+                      {llmTestState !== 'idle' && (
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          {llmTestState === 'testing' && <Loader2 className="h-3 w-3 text-text-dim animate-spin" />}
+                          {llmTestState === 'ok'      && <CheckCircle2 className="h-3 w-3 text-success" strokeWidth={2} />}
+                          {llmTestState === 'fail'    && <XCircle className="h-3 w-3 text-error" strokeWidth={2} />}
+                          <span className={`text-[10px] font-mono ${llmTestState === 'ok' ? 'text-success' : llmTestState === 'fail' ? 'text-error' : 'text-text-dim'}`}>
+                            {llmTestState === 'testing'
+                              ? 'Testing key…'
+                              : llmTestState === 'ok'
+                              ? 'Key valid'
+                              : llmTestDetail || 'Key rejected'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-text-dim">
+                    You can change this anytime in Settings → LLM Configuration.
+                  </p>
                 </div>
 
                 {error && (
